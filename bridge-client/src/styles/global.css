@@ -1,0 +1,165 @@
+/* ============================================================
+   BRIDGE — Shonen design system.
+   Direction: a fighting-anime title card. Loud, kinetic, high-contrast.
+   Tall poster caps (Bebas), chunky impact (Russo One), kanji-flavored
+   flourishes (Reggae One), data in Rajdhani. Signature motifs: diagonal
+   SPEED LINES, radial IMPACT bursts on actions, and a hot ink-red accent.
+   ============================================================ */
+
+:root {
+  /* Palette — ink, paper-flash, and a hot sun-red hero accent */
+  --ink:        #0d0b14;   /* near-black background */
+  --ink-2:      #16131f;   /* raised panels */
+  --ink-3:      #211c2e;   /* cards */
+  --line:       #342d44;
+  --paper:      #f7f3e9;   /* manga paper flash (text/panels) */
+  --hot:        #ff2d4d;   /* sun-red — the hero accent (impact, danger, energy) */
+  --hot-deep:   #b3122c;
+  --gold:       #ffc83d;   /* level/prestige */
+  --volt:       #46e6ff;   /* energy plane / cyan pop */
+  --violet:     #b15cff;   /* magic/impostor undertone */
+  --dim:        #8a7fa3;
+  --faint:      #5a5170;
+
+  /* Rarity colors */
+  --r-common:    #b8b2c8;
+  --r-rare:      #46a8ff;
+  --r-epic:      #c061ff;
+  --r-legendary: #ffc83d;
+
+  --display: "Bebas Neue", sans-serif;
+  --impact:  "Russo One", sans-serif;
+  --kanji:   "Reggae One", system-ui, sans-serif;
+  --body:    "Rajdhani", system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body {
+  background: var(--ink);
+  color: var(--paper);
+  font-family: var(--body);
+  overflow: hidden; /* the app manages its own scroll regions */
+  -webkit-font-smoothing: antialiased;
+}
+button { font-family: var(--body); cursor: pointer; border: none; background: none; color: inherit; }
+::selection { background: var(--hot); color: var(--ink); }
+
+/* ---- scrollbars (kept on-theme) ---- */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--ink-2); }
+::-webkit-scrollbar-thumb { background: var(--line); border-radius: 0; }
+::-webkit-scrollbar-thumb:hover { background: var(--hot-deep); }
+
+/* ============================================================
+   SIGNATURE 1 — diagonal speed lines (ambient motion)
+   A full-bleed layer of streaking lines that drift, used behind heroes.
+   ============================================================ */
+.speedlines {
+  position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 0;
+  opacity: 0.5;
+  background:
+    repeating-linear-gradient(
+      115deg,
+      transparent 0px,
+      transparent 22px,
+      rgba(255,255,255,0.035) 22px,
+      rgba(255,255,255,0.035) 24px,
+      transparent 24px,
+      transparent 46px
+    );
+  -webkit-mask-image: radial-gradient(120% 80% at 80% 20%, #000 0%, transparent 75%);
+          mask-image: radial-gradient(120% 80% at 80% 20%, #000 0%, transparent 75%);
+  animation: speeddrift 8s linear infinite;
+}
+.speedlines.hot {
+  background:
+    repeating-linear-gradient(
+      115deg,
+      transparent 0px, transparent 20px,
+      rgba(255,45,77,0.10) 20px, rgba(255,45,77,0.10) 23px,
+      transparent 23px, transparent 44px
+    );
+}
+@keyframes speeddrift { from { background-position: 0 0; } to { background-position: 200px 0; } }
+
+/* ============================================================
+   SIGNATURE 2 — impact burst (radial action flash)
+   Pop this on confirms/level-ups/eliminations. Self-cleaning via animation.
+   ============================================================ */
+.impact-burst {
+  position: absolute; left: 50%; top: 50%; width: 10px; height: 10px;
+  transform: translate(-50%,-50%); pointer-events: none; z-index: 60;
+}
+.impact-burst::before {
+  content: ""; position: absolute; inset: -120px;
+  background: radial-gradient(circle, rgba(255,255,255,0.9) 0%, rgba(255,45,77,0.5) 18%, transparent 55%);
+  animation: burstflash 0.45s ease-out forwards;
+}
+.impact-burst::after {
+  content: ""; position: absolute; inset: -80px; border-radius: 50%;
+  background:
+    repeating-conic-gradient(from 0deg, rgba(255,255,255,0.85) 0deg 3deg, transparent 3deg 11deg);
+  -webkit-mask-image: radial-gradient(circle, transparent 38%, #000 40%, #000 52%, transparent 58%);
+          mask-image: radial-gradient(circle, transparent 38%, #000 40%, #000 52%, transparent 58%);
+  animation: burstring 0.5s cubic-bezier(.2,.7,.3,1) forwards;
+}
+@keyframes burstflash { 0% { opacity: 0; transform: scale(0.4); } 25% { opacity: 1; } 100% { opacity: 0; transform: scale(1.1); } }
+@keyframes burstring  { 0% { opacity: 0; transform: scale(0.2) rotate(0deg); } 30% { opacity: 1; } 100% { opacity: 0; transform: scale(1.6) rotate(40deg); } }
+
+/* ============================================================
+   Shared structural bits
+   ============================================================ */
+.kanji { font-family: var(--kanji); }
+.display { font-family: var(--display); letter-spacing: 0.04em; }
+.impactf { font-family: var(--impact); }
+
+/* Angular clipped panel — the manga-panel shape used everywhere */
+.panel {
+  background: var(--ink-2);
+  border: 2px solid var(--line);
+  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px));
+  position: relative;
+}
+.panel-hot { border-color: var(--hot-deep); box-shadow: 0 0 0 1px rgba(255,45,77,0.2), 0 10px 40px rgba(0,0,0,0.5); }
+
+/* Hard diagonal label tag (eyebrow) */
+.tag {
+  display: inline-block; font-family: var(--impact); font-size: 11px; letter-spacing: 0.18em;
+  text-transform: uppercase; color: var(--ink); background: var(--hot);
+  padding: 3px 12px 3px 10px; transform: skewX(-12deg);
+}
+.tag > span { display: inline-block; transform: skewX(12deg); }
+
+/* Big shonen action button */
+.btn {
+  font-family: var(--impact); font-size: 15px; letter-spacing: 0.06em; text-transform: uppercase;
+  padding: 13px 26px; color: var(--paper); background: var(--ink-3);
+  border: 2px solid var(--line);
+  clip-path: polygon(8px 0, 100% 0, calc(100% - 8px) 100%, 0 100%);
+  transition: transform .08s ease, background .12s ease, color .12s ease, border-color .12s;
+}
+.btn:hover { transform: translateY(-2px); border-color: var(--hot); }
+.btn:active { transform: translateY(1px) scale(0.98); }
+.btn-hot { background: var(--hot); color: var(--ink); border-color: var(--hot); }
+.btn-hot:hover { background: #ff4d63; box-shadow: 0 0 24px rgba(255,45,77,0.5); }
+.btn-ghost { background: transparent; }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+/* Focus visibility (a11y floor) */
+:focus-visible { outline: 3px solid var(--volt); outline-offset: 2px; }
+
+/* Reduced motion respect */
+@media (prefers-reduced-motion: reduce) {
+  .speedlines, .impact-burst::before, .impact-burst::after { animation: none; }
+  * { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+}
+
+/* utility */
+.row { display: flex; align-items: center; }
+.col { display: flex; flex-direction: column; }
+.gap-s { gap: 8px; } .gap-m { gap: 16px; } .gap-l { gap: 28px; }
+.grow { flex: 1; }
+.center { align-items: center; justify-content: center; }
+.dim { color: var(--dim); }
+.faint { color: var(--faint); }

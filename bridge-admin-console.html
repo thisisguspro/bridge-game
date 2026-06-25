@@ -1,0 +1,734 @@
+<!--
+  PROJECT BRIDGE — Admin Console (standalone web app)
+  A separate operator tool that consumes the backend /admintool API.
+  - Set API_BASE to your backend URL. Sign in with the same Google account that
+    holds admin/superadmin role (bootstrap email becomes superadmin).
+  - Ships with MOCK MODE on by default so the UI is fully usable without a
+    backend; flip USE_MOCK to false to hit the real API.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>BRIDGE — Admin Console</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap');
+
+  :root{
+    --bg:#0e1116; --bg2:#141922; --panel:#1a212c; --panel2:#212a37;
+    --line:#2b3645; --line2:#3a4858;
+    --ink:#e6ecf3; --dim:#8a98a8; --faint:#5b6878;
+    --signal:#ff9d2e;      /* authority / caution amber */
+    --signal-dim:#7a5320;
+    --danger:#ff5d5d; --danger-dim:#7a2e2e;
+    --ok:#46d6a0; --info:#5aa8ff;
+    --mono:'IBM Plex Mono',monospace; --sans:'Inter',system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:14px;line-height:1.5}
+  a{color:var(--signal)}
+  button{font-family:var(--sans);cursor:pointer}
+  input,select{font-family:var(--sans)}
+  .mono{font-family:var(--mono)}
+
+  /* shell */
+  .topbar{display:flex;align-items:center;gap:16px;padding:12px 20px;background:var(--bg2);
+    border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20}
+  .brand{font-weight:700;letter-spacing:.5px;display:flex;align-items:center;gap:10px}
+  .brand .dot{width:9px;height:9px;border-radius:2px;background:var(--signal);box-shadow:0 0 10px var(--signal)}
+  .brand small{color:var(--dim);font-weight:500;font-family:var(--mono);font-size:11px;letter-spacing:1px}
+  .badge{margin-left:auto;font-family:var(--mono);font-size:11px;padding:4px 10px;border:1px solid var(--line2);
+    border-radius:5px;color:var(--dim)}
+  .badge.super{color:var(--signal);border-color:var(--signal-dim)}
+  .mockflag{font-family:var(--mono);font-size:10px;color:var(--signal);border:1px dashed var(--signal-dim);
+    padding:3px 8px;border-radius:4px}
+
+  .wrap{max-width:1080px;margin:0 auto;padding:24px 20px 80px}
+
+  /* search-first command bar (signature) */
+  .command{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:6px;
+    display:flex;gap:6px;align-items:center;box-shadow:0 8px 30px rgba(0,0,0,.4)}
+  .command .prompt{font-family:var(--mono);color:var(--signal);padding:0 10px;font-size:18px;user-select:none}
+  .command input{flex:1;background:transparent;border:none;outline:none;color:var(--ink);
+    font-size:16px;font-family:var(--mono);padding:12px 4px}
+  .command input::placeholder{color:var(--faint)}
+  .command button{background:var(--signal);color:#1a1206;border:none;border-radius:8px;
+    padding:11px 18px;font-weight:700;font-size:13px}
+
+  .hint{color:var(--faint);font-family:var(--mono);font-size:11px;margin:10px 4px 0}
+
+  /* results */
+  .results{margin-top:18px;display:flex;flex-direction:column;gap:8px}
+  .row{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px;
+    display:flex;align-items:center;gap:14px;cursor:pointer;transition:border-color .12s,background .12s}
+  .row:hover{border-color:var(--line2);background:var(--panel2)}
+  .av{width:34px;height:34px;border-radius:7px;background:linear-gradient(135deg,#2a3442,#1a212c);
+    display:flex;align-items:center;justify-content:center;font-weight:700;color:var(--dim);flex-shrink:0}
+  .row .nm{font-weight:600}
+  .row .em{color:var(--dim);font-family:var(--mono);font-size:12px}
+  .row .meta{margin-left:auto;display:flex;gap:14px;align-items:center;font-family:var(--mono);font-size:12px;color:var(--dim)}
+  .pill{font-family:var(--mono);font-size:10px;padding:2px 7px;border-radius:4px;border:1px solid var(--line2);text-transform:uppercase;letter-spacing:.5px}
+  .pill.ban{color:var(--danger);border-color:var(--danger-dim)}
+  .pill.sil{color:var(--info);border-color:#2e4a7a}
+  .pill.admin{color:var(--signal);border-color:var(--signal-dim)}
+
+  /* detail panel */
+  .detail{margin-top:20px;background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .detail .head{padding:18px 20px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:14px;background:var(--panel2)}
+  .detail .head .av{width:46px;height:46px;font-size:18px}
+  .detail .head h2{margin:0;font-size:18px}
+  .detail .head .sub{color:var(--dim);font-family:var(--mono);font-size:12px}
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border-bottom:1px solid var(--line)}
+  .stat{background:var(--panel);padding:14px 16px}
+  .stat .k{color:var(--faint);font-size:11px;text-transform:uppercase;letter-spacing:.6px}
+  .stat .v{font-family:var(--mono);font-size:18px;margin-top:3px}
+  .section{padding:16px 20px;border-bottom:1px solid var(--line)}
+  .section:last-child{border-bottom:none}
+  .section h3{margin:0 0 12px;font-size:12px;text-transform:uppercase;letter-spacing:.8px;color:var(--dim)}
+  .ctl{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .ctl select,.ctl input{background:var(--bg2);border:1px solid var(--line2);border-radius:7px;
+    color:var(--ink);padding:9px 11px;font-size:13px}
+  .ctl input{font-family:var(--mono);width:110px}
+  .btn{background:var(--panel2);border:1px solid var(--line2);color:var(--ink);border-radius:7px;
+    padding:9px 14px;font-size:13px;font-weight:600}
+  .btn:hover{border-color:var(--dim)}
+  .btn.primary{background:var(--signal);color:#1a1206;border-color:var(--signal)}
+  .btn.danger{background:transparent;color:var(--danger);border-color:var(--danger-dim)}
+  .btn.danger:hover{background:rgba(255,93,93,.08)}
+  .owned{display:flex;flex-wrap:wrap;gap:6px}
+  .chip{font-family:var(--mono);font-size:11px;background:var(--bg2);border:1px solid var(--line);
+    border-radius:5px;padding:4px 8px;display:flex;align-items:center;gap:6px}
+  .chip .x{color:var(--danger);cursor:pointer;font-weight:700}
+
+  .tab{display:flex;gap:4px;margin-bottom:18px}
+  .tab button{background:transparent;border:1px solid transparent;color:var(--dim);padding:8px 14px;
+    border-radius:8px;font-weight:600;font-size:13px}
+  .tab button.on{color:var(--ink);background:var(--panel);border-color:var(--line)}
+
+  .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);z-index:60;
+    background:var(--panel2);border:1px solid var(--line2);border-radius:9px;padding:11px 18px;
+    font-size:13px;box-shadow:0 8px 30px rgba(0,0,0,.5);display:flex;align-items:center;gap:9px}
+  .toast .d{width:7px;height:7px;border-radius:50%}
+  .empty{color:var(--faint);text-align:center;padding:40px;font-family:var(--mono);font-size:13px}
+
+  /* signin */
+  .signin{max-width:380px;margin:14vh auto 0;text-align:center}
+  .signin h1{font-size:24px;letter-spacing:.5px;margin:6px 0}
+  .signin p{color:var(--dim);margin:0 0 26px}
+  .gbtn{width:100%;padding:13px;border-radius:9px;border:1px solid var(--line2);background:var(--panel);
+    color:var(--ink);font-weight:600;font-size:14px}
+  .modal-bg{position:fixed;inset:0;background:rgba(6,9,13,.7);z-index:50;display:flex;align-items:center;justify-content:center}
+  .modal{background:var(--panel);border:1px solid var(--line2);border-radius:12px;padding:22px;max-width:420px;width:90%}
+  .modal h3{margin:0 0 8px}.modal p{color:var(--dim);margin:0 0 18px;font-size:13px}
+  .modal .ctl{justify-content:flex-end}
+table.grid{border-collapse:collapse;width:100%;font-size:13px}
+table.grid th{text-align:left;padding:8px 10px;border-bottom:2px solid var(--line,#333);color:var(--dim,#888);font-size:11px;letter-spacing:.06em;text-transform:uppercase}
+table.grid td{padding:8px 10px;border-bottom:1px solid rgba(255,255,255,.06);vertical-align:middle}
+table.grid input[type=number]{background:#0d0b14;border:1px solid var(--line,#333);color:#eee;padding:5px 7px;font-family:monospace}
+table.grid .nm{font-weight:700}
+table.grid .em{font-size:11px;color:var(--dim,#888);font-family:monospace}
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script>
+// ============================================================
+// CONFIG
+// ============================================================
+const API_BASE = "http://localhost:4000";  // <-- point at your backend
+let   USE_MOCK = true;                       // <-- set false to hit the real API
+
+// ---- mock data (so the console is demonstrable without a backend) ----
+const MOCK = {
+  me: { role: "superadmin", userId: "u_boss" },
+  cosmetics: [
+    { id:"tool_drill", name:"Plasma Drill", rarity:"Rare", slot:"weapon" },
+    { id:"head_halo", name:"Spirit Halo", rarity:"Legendary", slot:"headpiece" },
+    { id:"body_ronin", name:"Celestial Ronin", rarity:"Legendary", slot:"body" },
+    { id:"tool_chicken", name:"Rubber Chicken", rarity:"Epic", slot:"weapon" },
+  ],
+  currencies: ["CREDITS","PREMIUM"],
+  modes: [
+    { id:"infection", label:"Infection" },
+    { id:"koth", label:"King of the Hill" },
+    { id:"hotpotato", label:"Hot Potato" },
+    { id:"musicalchairs", label:"Musical Chairs" },
+    { id:"whodidit", label:"Who Did It?" },
+  ],
+  eventFlags: [
+    { key:"BOUNTY_TARGET", label:"Bounty Target", desc:"Saboteurs who take this player down during the event earn the reward." },
+    { key:"EVENT_HOST", label:"Event Host", desc:"May edit game options beyond normal host config and run event game modes." },
+  ],
+  events: {
+    ev_1: { id:"ev_1", name:"Launch Bounty Week", type:"bounty", mode:null, enabled:true, startsAt:new Date().toISOString(), endsAt:null, config:{}, reward:{ currency:"PREMIUM", amount:250, cosmeticId:"head_halo" } },
+  },
+  storeItems: [
+    { kind:"item", id:"si_band_knot", cosmeticId:"bandana_knot", name:"Knotted Bandana", rarity:"Common", currency:"CREDITS", price:150, dropWeight:70, worth:25, enabled:true },
+    { kind:"item", id:"si_visor", cosmeticId:"head_visor", name:"Neon Visor", rarity:"Rare", currency:"CREDITS", price:600, dropWeight:24, worth:120, enabled:true },
+    { kind:"item", id:"si_halo", cosmeticId:"head_halo", name:"Spirit Halo", rarity:"Legendary", currency:"PREMIUM", price:100, priceCents:100, dropWeight:2, worth:900, enabled:true },
+    { kind:"item", id:"si_ronin", cosmeticId:"body_ronin", name:"Celestial Ronin", rarity:"Legendary", currency:"PREMIUM", price:100, priceCents:100, dropWeight:3, worth:850, enabled:true },
+    { kind:"item", id:"si_aurora", cosmeticId:"border_aurora", name:"Aurora Frame", rarity:"Epic", currency:"PREMIUM", price:100, priceCents:100, dropWeight:10, worth:400, enabled:true },
+  ],
+  storeBoxes: [
+    { kind:"box", id:"cadet_crate", name:"Cadet Crate", currency:"CREDITS", price:250, worth:250, enabled:true },
+    { kind:"box", id:"prism_vault", name:"Prism Vault", currency:"PREMIUM", price:300, priceCents:300, worth:300, enabled:true },
+  ],
+  eventFlagRows: [
+    { eventId:"ev_1", userId:"u_1", flag:"BOUNTY_TARGET" },
+  ],
+  users: {
+    u_boss:  { id:"u_boss", name:"Boss", email:"gmromeu13@gmail.com", avatar:"B", level:30, xp:99999, balances:{CREDITS:99999,PREMIUM:5000}, adminRole:"superadmin", moderation:{banned:false,banUntil:null,banReason:null,silenced:false}, owned:["tool_drill","head_halo"], loadout:{} },
+    u_1:     { id:"u_1", name:"Aoi", email:"aoi@example.com", avatar:"A", level:12, xp:6400, balances:{CREDITS:2450,PREMIUM:300}, adminRole:null, moderation:{banned:false,banUntil:null,banReason:null,silenced:false}, owned:["tool_chicken"], loadout:{} },
+    u_2:     { id:"u_2", name:"Kenji", email:"kenji@example.com", avatar:"K", level:7, xp:1800, balances:{CREDITS:600,PREMIUM:0}, adminRole:"admin", moderation:{banned:false,banUntil:null,banReason:null,silenced:true}, owned:[], loadout:{} },
+    u_3:     { id:"u_3", name:"Mara", email:"mara@example.com", avatar:"M", level:3, xp:300, balances:{CREDITS:1000,PREMIUM:0}, adminRole:null, moderation:{banned:true,banUntil:null,banReason:"cheating",silenced:false}, owned:[], loadout:{} },
+  },
+};
+
+// ============================================================
+// API layer (mock or real)
+// ============================================================
+let TOKEN = USE_MOCK ? "mock" : (localStorage.getItem("bridge_admin_token") || null);
+
+async function api(path, opts={}) {
+  if (USE_MOCK) return mockApi(path, opts);
+  const res = await fetch(API_BASE + path, {
+    method: opts.method || "GET",
+    headers: { "Content-Type":"application/json", "Authorization":`Bearer ${TOKEN}` },
+    body: opts.body ? JSON.stringify(opts.body) : undefined,
+  });
+  if (!res.ok) throw new Error((await res.json().catch(()=>({}))).error || `HTTP ${res.status}`);
+  return res.json();
+}
+
+function mockApi(path, opts){
+  const m = opts.method || "GET", b = opts.body || {};
+  const U = MOCK.users;
+  if (path === "/admintool/me") return P(MOCK.me);
+  if (path === "/admintool/catalogue") return P({ cosmetics:MOCK.cosmetics, currencies:MOCK.currencies, modes:MOCK.modes, eventFlags:MOCK.eventFlags });
+  // ----- store admin (mock) -----
+  if (path === "/admintool/store" && m === "GET") return P({ items: MOCK.storeItems, boxes: MOCK.storeBoxes });
+  if (path === "/admintool/store/item" && m === "POST") { const id="si_"+(MOCK.storeItems.length+1); const it={ kind:"item", id, enabled:true, dropWeight:10, worth:0, currency:"CREDITS", price:100, ...b }; MOCK.storeItems.push(it); return P({ item:it }); }
+  const sm=path.match(/^\/admintool\/store\/([^/]+)$/);
+  if (sm && m === "POST") { const e=[...MOCK.storeItems,...MOCK.storeBoxes].find(x=>x.id===sm[1]); if(!e)return reject("not found"); Object.assign(e,b); return P({ entry:e }); }
+  if (sm && m === "DELETE") { const i=MOCK.storeItems.findIndex(x=>x.id===sm[1]); if(i>=0)MOCK.storeItems.splice(i,1); return P({ deleted:i>=0 }); }
+  // ----- events (mock) -----
+  if (path === "/admintool/events" && m === "GET") return P({ events:Object.values(MOCK.events), flags:MOCK.eventFlags, modes:MOCK.modes });
+  if (path === "/admintool/events" && m === "POST") {
+    const id = "ev_" + (Object.keys(MOCK.events).length + 1);
+    const ev = { id, name:b.name||id, type:b.type||"generic", mode:b.mode||null, enabled:true,
+      startsAt:b.startsAt||new Date().toISOString(), endsAt:b.endsAt||null, config:b.config||{},
+      reward:{ currency:b.reward?.currency||null, amount:b.reward?.amount||0, cosmeticId:b.reward?.cosmeticId||null } };
+    MOCK.events[id] = ev; return P({ event:ev });
+  }
+  const evm = path.match(/^\/admintool\/events\/([^/]+)$/);
+  if (evm && m === "POST") { const ev=MOCK.events[evm[1]]; if(!ev)return reject("event not found"); Object.assign(ev, b); if(b.reward)ev.reward={currency:b.reward.currency||null,amount:b.reward.amount||0,cosmeticId:b.reward.cosmeticId||null}; return P({ event:ev }); }
+  if (evm && m === "DELETE") { const ok=!!MOCK.events[evm[1]]; delete MOCK.events[evm[1]]; return P({ deleted:ok }); }
+  const flm = path.match(/^\/admintool\/events\/([^/]+)\/flags$/);
+  if (flm && m === "GET") return P({ flags: MOCK.eventFlagRows.filter(f=>f.eventId===flm[1]) });
+  const fset = path.match(/^\/admintool\/events\/([^/]+)\/flag$/);
+  if (fset && m === "POST") { MOCK.eventFlagRows = MOCK.eventFlagRows.filter(f=>!(f.eventId===fset[1]&&f.userId===b.userId)); MOCK.eventFlagRows.push({ eventId:fset[1], userId:b.userId, flag:b.flag }); return P({ eventId:fset[1], userId:b.userId, flag:b.flag }); }
+  const funset = path.match(/^\/admintool\/events\/([^/]+)\/unflag$/);
+  if (funset && m === "POST") { const before=MOCK.eventFlagRows.length; MOCK.eventFlagRows = MOCK.eventFlagRows.filter(f=>!(f.eventId===funset[1]&&f.userId===b.userId)); return P({ cleared: before!==MOCK.eventFlagRows.length }); }
+  if (path.startsWith("/admintool/users?q=")) {
+    const q = decodeURIComponent(path.split("=")[1]||"").toLowerCase();
+    const results = Object.values(U).filter(u => u.id===q || u.email.toLowerCase()===q || u.name.toLowerCase().includes(q))
+      .map(summary);
+    return P({ results });
+  }
+  const um = path.match(/^\/admintool\/users\/([^/]+)$/);
+  if (um && m==="GET"){ const u=U[um[1]]; return u?P({user:{...summary(u),owned:u.owned,loadout:u.loadout}}):reject("Account not found."); }
+  const act = path.match(/^\/admintool\/users\/([^/]+)\/(\w[\w-]*)$/);
+  if (act && m==="POST"){
+    const u=U[act[1]]; if(!u) return reject("Account not found.");
+    const what=act[2];
+    if(what==="grant"){ if(b.cosmeticId)u.owned=[...new Set([...u.owned,b.cosmeticId])]; if(b.currency&&b.amount)u.balances[b.currency]=(u.balances[b.currency]||0)+(+b.amount); return P({ok:true}); }
+    if(what==="remove"){ if(b.cosmeticId)u.owned=u.owned.filter(x=>x!==b.cosmeticId); if(b.currency&&b.amount)u.balances[b.currency]=Math.max(0,(u.balances[b.currency]||0)-(+b.amount)); return P({ok:true}); }
+    if(what==="set-balance"){ u.balances[b.currency]=Math.max(0,Math.round(b.value)); return P({balance:u.balances[b.currency]}); }
+    if(what==="ban"){ u.moderation.banned=b.banned!==false; u.moderation.banReason=u.moderation.banned?(b.reason||null):null; u.moderation.banUntil=u.moderation.banned&&b.durationMs?new Date(Date.now()+b.durationMs).toISOString():null; return P({moderation:u.moderation}); }
+    if(what==="unban"){ u.moderation.banned=false; u.moderation.banUntil=null; u.moderation.banReason=null; return P({moderation:u.moderation}); }
+    if(what==="silence"){ u.moderation.silenced=b.silenced!==false; return P({moderation:u.moderation}); }
+  }
+  if(path==="/admintool/bulk/grant"||path==="/admintool/bulk/remove"){
+    const ids = b.all? Object.keys(U) : (b.userIds||[]);
+    ids.forEach(id=>{ const u=U[id]; if(!u)return;
+      if(path.endsWith("grant")){ if(b.cosmeticId)u.owned=[...new Set([...u.owned,b.cosmeticId])]; if(b.currency&&b.amount)u.balances[b.currency]=(u.balances[b.currency]||0)+(+b.amount); }
+      else { if(b.cosmeticId)u.owned=u.owned.filter(x=>x!==b.cosmeticId); if(b.currency&&b.amount)u.balances[b.currency]=Math.max(0,(u.balances[b.currency]||0)-(+b.amount)); }
+    });
+    return P({ count: ids.length, results: ids.map(id=>({userId:id,ok:!!U[id]})) });
+  }
+  if(path==="/admintool/admins"&&m==="GET") return P({ admins:Object.values(U).filter(u=>u.adminRole).map(summary) });
+  const rm = path.match(/^\/admintool\/admins\/([^/]+)\/role$/);
+  if(rm&&m==="POST"){ const u=U[rm[1]]; if(!u)return reject("Account not found."); u.adminRole=b.role??null; return P({userId:u.id,adminRole:u.adminRole}); }
+  return reject("Unknown endpoint (mock): "+path);
+}
+const P = v => Promise.resolve(structuredClone(v));
+const reject = msg => Promise.reject(new Error(msg));
+function summary(u){ return { id:u.id,name:u.name,email:u.email,avatar:u.avatar,level:u.level,xp:u.xp,
+  balances:u.balances,adminRole:u.adminRole,moderation:u.moderation,ownedCount:u.owned.length }; }
+
+// ============================================================
+// App state + render
+// ============================================================
+const app = document.getElementById("app");
+let state = { me:null, catalogue:null, results:[], selected:null, tab:"account", admins:[], events:[], editingEvent:null };
+
+function toast(msg, color="var(--ok)"){
+  const t=document.createElement("div"); t.className="toast";
+  t.innerHTML=`<span class="d" style="background:${color}"></span>${esc(msg)}`;
+  document.body.appendChild(t); setTimeout(()=>t.remove(),2600);
+}
+const esc = s => String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+async function boot(){
+  if(!TOKEN){ renderSignin(); return; }
+  try{
+    state.me = (await api("/admintool/me"));
+    state.catalogue = await api("/admintool/catalogue");
+    renderShell();
+  }catch(e){
+    if(String(e.message).includes("Admin")||String(e.message).includes("403")){ renderSignin("This account isn't an admin."); }
+    else { renderSignin("Couldn't reach the admin API. Check API_BASE / sign in."); }
+  }
+}
+
+function renderSignin(err){
+  app.innerHTML = `
+    <div class="signin">
+      <div class="brand" style="justify-content:center"><span class="dot"></span> BRIDGE <small>ADMIN CONSOLE</small></div>
+      <h1>Operator sign-in</h1>
+      <p>Use the Google account with admin access.${USE_MOCK?'<br><span class="mockflag">MOCK MODE</span>':''}</p>
+      ${err?`<p style="color:var(--danger)">${esc(err)}</p>`:""}
+      <button class="gbtn" id="go">${USE_MOCK?"Enter console (mock)":"Sign in with Google"}</button>
+    </div>`;
+  document.getElementById("go").onclick = async ()=>{
+    if(USE_MOCK){ TOKEN="mock"; boot(); return; }
+    // Real flow: obtain a Google ID token, exchange at /auth/google for a session
+    // token, store it, then boot(). (Wire to your Google client when keys exist.)
+    const t = prompt("Paste a backend session token (from /auth/google):");
+    if(t){ TOKEN=t; localStorage.setItem("bridge_admin_token",t); boot(); }
+  };
+}
+
+function renderShell(){
+  const isSuper = state.me.role==="superadmin";
+  app.innerHTML = `
+    <div class="topbar">
+      <div class="brand"><span class="dot"></span> BRIDGE <small>ADMIN CONSOLE</small></div>
+      ${USE_MOCK?'<span class="mockflag">MOCK MODE</span>':''}
+      <span class="badge ${isSuper?'super':''}">${esc(state.me.role.toUpperCase())}</span>
+    </div>
+    <div class="wrap">
+      <div class="tab">
+        <button data-tab="account" class="${state.tab==='account'?'on':''}">Accounts</button>
+        <button data-tab="bulk" class="${state.tab==='bulk'?'on':''}">Bulk tools</button>
+        <button data-tab="events" class="${state.tab==='events'?'on':''}">Events</button>
+        <button data-tab="store" class="${state.tab==='store'?'on':''}">Store</button>
+        ${isSuper?`<button data-tab="admins" class="${state.tab==='admins'?'on':''}">Admin roles</button>`:""}
+      </div>
+      <div id="view"></div>
+    </div>`;
+  app.querySelectorAll(".tab button").forEach(b=>b.onclick=()=>{ state.tab=b.dataset.tab; renderShell(); });
+  if(state.tab==="account") renderAccounts();
+  if(state.tab==="bulk") renderBulk();
+  if(state.tab==="events") renderEvents();
+  if(state.tab==="store") renderStore();
+  if(state.tab==="admins") renderAdmins();
+}
+
+// ---------- Accounts tab ----------
+function renderAccounts(){
+  const v=document.getElementById("view");
+  v.innerHTML = `
+    <div class="command">
+      <span class="prompt">⌕</span>
+      <input id="q" placeholder="search by id, email, or name…" autocomplete="off" />
+      <button id="search">Search</button>
+    </div>
+    <div class="hint">find an account, then act on it — grant, remove, ban, or silence.</div>
+    <div class="results" id="results"></div>
+    <div id="detail"></div>`;
+  const q=document.getElementById("q");
+  const run=async()=>{
+    const term=q.value.trim(); if(!term)return;
+    try{ const {results}=await api("/admintool/users?q="+encodeURIComponent(term)); state.results=results; paintResults(); }
+    catch(e){ toast(e.message,"var(--danger)"); }
+  };
+  document.getElementById("search").onclick=run;
+  q.addEventListener("keydown",e=>{ if(e.key==="Enter")run(); });
+  q.focus();
+  paintResults();
+}
+function paintResults(){
+  const el=document.getElementById("results"); if(!el)return;
+  if(state.results.length===0){ el.innerHTML=`<div class="empty">no results yet — search above.</div>`; return; }
+  el.innerHTML = state.results.map(u=>`
+    <div class="row" data-id="${u.id}">
+      <div class="av">${esc((u.name||"?")[0])}</div>
+      <div><div class="nm">${esc(u.name)}</div><div class="em">${esc(u.email||u.id)}</div></div>
+      <div class="meta">
+        ${u.adminRole?`<span class="pill admin">${esc(u.adminRole)}</span>`:""}
+        ${u.moderation.banned?`<span class="pill ban">banned</span>`:""}
+        ${u.moderation.silenced?`<span class="pill sil">silenced</span>`:""}
+        <span>LV ${u.level}</span><span>◈ ${u.balances.CREDITS}</span>
+      </div>
+    </div>`).join("");
+  el.querySelectorAll(".row").forEach(r=>r.onclick=()=>openDetail(r.dataset.id));
+}
+
+async function openDetail(id){
+  try{ const {user}=await api("/admintool/users/"+id); state.selected=user; paintDetail(); }
+  catch(e){ toast(e.message,"var(--danger)"); }
+}
+function paintDetail(){
+  const u=state.selected, d=document.getElementById("detail"); if(!d)return;
+  const cosmOpts = state.catalogue.cosmetics.map(c=>`<option value="${c.id}">${esc(c.name)} (${c.rarity})</option>`).join("");
+  const curOpts = state.catalogue.currencies.map(c=>`<option value="${c}">${c}</option>`).join("");
+  const banned = u.moderation.banned;
+  d.innerHTML = `
+   <div class="detail">
+    <div class="head">
+      <div class="av">${esc((u.name||"?")[0])}</div>
+      <div><h2>${esc(u.name)}</h2><div class="sub">${esc(u.email||"")} · <span class="mono">${esc(u.id)}</span></div></div>
+      <div style="margin-left:auto;display:flex;gap:6px">
+        ${u.adminRole?`<span class="pill admin">${esc(u.adminRole)}</span>`:""}
+        ${banned?`<span class="pill ban">banned</span>`:""}
+        ${u.moderation.silenced?`<span class="pill sil">silenced</span>`:""}
+      </div>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="k">Level</div><div class="v">${u.level}</div></div>
+      <div class="stat"><div class="k">XP</div><div class="v">${u.xp}</div></div>
+      <div class="stat"><div class="k">Credits</div><div class="v">${u.balances.CREDITS}</div></div>
+      <div class="stat"><div class="k">Prisms</div><div class="v">${u.balances.PREMIUM}</div></div>
+    </div>
+
+    <div class="section">
+      <h3>Grant</h3>
+      <div class="ctl">
+        <select id="g-cos"><option value="">— cosmetic —</option>${cosmOpts}</select>
+        <button class="btn" id="g-cos-btn">Grant item</button>
+        <span style="width:14px"></span>
+        <select id="g-cur">${curOpts}</select>
+        <input id="g-amt" type="number" placeholder="amount" />
+        <button class="btn" id="g-cur-btn">Grant currency</button>
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>Remove / set</h3>
+      <div class="ctl">
+        <select id="r-cur">${curOpts}</select>
+        <input id="r-amt" type="number" placeholder="amount" />
+        <button class="btn" id="r-cur-btn">Remove</button>
+        <button class="btn" id="s-cur-btn">Set exact</button>
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>Owned cosmetics (${u.owned.length})</h3>
+      <div class="owned">${u.owned.length? u.owned.map(id=>`<span class="chip">${esc(cosName(id))}<span class="x" data-rm="${id}">✕</span></span>`).join("") : '<span class="empty" style="padding:0">none</span>'}</div>
+    </div>
+
+    <div class="section">
+      <h3>Moderation</h3>
+      <div class="ctl">
+        ${banned
+          ? `<button class="btn" id="unban">Lift ban</button>`
+          : `<input id="ban-reason" placeholder="reason" style="width:160px;font-family:var(--sans)" />
+             <select id="ban-dur"><option value="">permanent</option><option value="3600000">1 hour</option><option value="86400000">1 day</option><option value="604800000">1 week</option></select>
+             <button class="btn danger" id="ban">Ban</button>`}
+        <span style="width:14px"></span>
+        <button class="btn" id="silence">${u.moderation.silenced?"Unsilence":"Silence (voice off)"}</button>
+      </div>
+    </div>
+   </div>`;
+
+  // grant
+  d.querySelector("#g-cos-btn").onclick=()=>act("grant",{cosmeticId:val("#g-cos")},"Item granted");
+  d.querySelector("#g-cur-btn").onclick=()=>act("grant",{currency:val("#g-cur"),amount:+val("#g-amt")},"Currency granted");
+  d.querySelector("#r-cur-btn").onclick=()=>act("remove",{currency:val("#r-cur"),amount:+val("#r-amt")},"Currency removed");
+  d.querySelector("#s-cur-btn").onclick=()=>act("set-balance",{currency:val("#r-cur"),value:+val("#r-amt")},"Balance set");
+  d.querySelectorAll("[data-rm]").forEach(x=>x.onclick=()=>act("remove",{cosmeticId:x.dataset.rm},"Item removed"));
+  // moderation (ban is confirmation-gated)
+  if(banned){ d.querySelector("#unban").onclick=()=>act("unban",{},"Ban lifted"); }
+  else { d.querySelector("#ban").onclick=()=>confirmDanger(`Ban ${u.name}?`,"This blocks login and match join.",()=>act("ban",{banned:true,reason:val("#ban-reason"),durationMs:val("#ban-dur")?+val("#ban-dur"):null},"Account banned")); }
+  d.querySelector("#silence").onclick=()=>act("silence",{silenced:!u.moderation.silenced}, u.moderation.silenced?"Unsilenced":"Silenced");
+}
+const val = sel => { const e=document.querySelector(sel); return e?e.value:""; };
+const cosName = id => (state.catalogue.cosmetics.find(c=>c.id===id)||{}).name || id;
+
+async function act(what, body, okMsg){
+  try{ await api(`/admintool/users/${state.selected.id}/${what}`,{method:"POST",body}); toast(okMsg);
+    await openDetail(state.selected.id); // refresh
+    // also refresh the row list if present
+    if(state.results.length){ const {results}=await api("/admintool/users?q="+encodeURIComponent(state.selected.email||state.selected.id)); state.results=results; paintResults(); }
+  }catch(e){ toast(e.message,"var(--danger)"); }
+}
+
+// ---------- Bulk tab ----------
+function renderBulk(){
+  const v=document.getElementById("view");
+  const cosmOpts = state.catalogue.cosmetics.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join("");
+  const curOpts = state.catalogue.currencies.map(c=>`<option value="${c}">${c}</option>`).join("");
+  v.innerHTML=`
+    <div class="detail">
+      <div class="section">
+        <h3>Targets</h3>
+        <div class="ctl">
+          <label class="mono" style="font-size:12px"><input type="radio" name="tg" value="ids" checked> specific IDs</label>
+          <label class="mono" style="font-size:12px"><input type="radio" name="tg" value="all"> everyone</label>
+        </div>
+        <textarea id="ids" placeholder="comma- or newline-separated user IDs" style="margin-top:10px;width:100%;min-height:70px;background:var(--bg2);border:1px solid var(--line2);border-radius:7px;color:var(--ink);font-family:var(--mono);padding:10px"></textarea>
+      </div>
+      <div class="section">
+        <h3>Gift</h3>
+        <div class="ctl">
+          <select id="b-cos"><option value="">— cosmetic —</option>${cosmOpts}</select>
+          <select id="b-cur"><option value="">— currency —</option>${curOpts}</select>
+          <input id="b-amt" type="number" placeholder="amount" />
+          <button class="btn primary" id="b-grant">Gift to targets</button>
+          <button class="btn danger" id="b-remove">Remove from targets</button>
+        </div>
+      </div>
+    </div>`;
+  const targets=()=>{ const all=v.querySelector('input[name="tg"]:checked').value==="all";
+    return all?{all:true}:{userIds:v.querySelector("#ids").value.split(/[\s,]+/).map(s=>s.trim()).filter(Boolean)}; };
+  const payload=()=>({...targets(),cosmeticId:val("#b-cos")||null,currency:val("#b-cur")||null,amount:+val("#b-amt")||0});
+  v.querySelector("#b-grant").onclick=()=>{ const t=targets(); const msg=t.all?"Gift to EVERYONE?":"Gift to "+(t.userIds.length)+" account(s)?";
+    confirmDanger(msg,"This applies immediately.",()=>bulk("grant")); };
+  v.querySelector("#b-remove").onclick=()=>{ const t=targets(); const msg=t.all?"Remove from EVERYONE?":"Remove from "+(t.userIds.length)+" account(s)?";
+    confirmDanger(msg,"This applies immediately.",()=>bulk("remove")); };
+  async function bulk(kind){ try{ const r=await api("/admintool/bulk/"+kind,{method:"POST",body:payload()}); toast(`${kind==="grant"?"Gifted":"Removed"} · ${r.count} account(s)`); }catch(e){ toast(e.message,"var(--danger)"); } }
+}
+
+// ---------- Store tab ----------
+async function renderStore(){
+  const v=document.getElementById("view");
+  v.innerHTML=`<div class="empty">loading…</div>`;
+  try{
+    const { items, boxes } = await api("/admintool/store");
+    const raric=(r)=>({Common:"#b8b2c8",Rare:"#46a8ff",Epic:"#c061ff",Legendary:"#ffc83d"}[r]||"#b8b2c8");
+    const row=(e,isBox)=>`
+      <tr data-id="${e.id}">
+        <td><span class="pill" style="border-color:${raric(e.rarity)}">${isBox?"BOX":esc(e.rarity||"—")}</span></td>
+        <td><div class="nm">${esc(e.name)}</div><div class="em">${esc(e.id)}${e.cosmeticId?" · "+esc(e.cosmeticId):""}</div></td>
+        <td>${e.currency}</td>
+        <td><input class="s-price" type="number" value="${e.price??0}" style="width:80px"/></td>
+        <td>${e.currency==="PREMIUM"?`<input class="s-cents" type="number" value="${e.priceCents??""}" placeholder="cents" style="width:80px"/>`:'<span class="faint">—</span>'}</td>
+        <td><input class="s-weight" type="number" value="${e.dropWeight??0}" style="width:64px"/></td>
+        <td><input class="s-worth" type="number" value="${e.worth??0}" style="width:80px"/></td>
+        <td><input class="s-enabled" type="checkbox" ${e.enabled!==false?"checked":""}/></td>
+        <td><button class="btn" data-save="${e.id}">Save</button>${isBox?"":`<button class="btn danger" data-del="${e.id}">✕</button>`}</td>
+      </tr>`;
+    v.innerHTML=`
+      <div class="detail">
+        <div class="section"><h3>Store — items & boxes</h3>
+          <p class="hint">Players see <b>price</b> and <b>currency</b> only. <b>Drop weight</b> (loot-box likelihood) and <b>worth</b> (internal value) are admin-only and never sent to players. Premium items use <b>cents</b> for Stripe checkout.</p>
+          <div style="overflow:auto">
+          <table class="grid">
+            <thead><tr><th>Tier</th><th>Item</th><th>Cur</th><th>Price</th><th>¢ (cash)</th><th>Wt</th><th>Worth</th><th>On</th><th></th></tr></thead>
+            <tbody>
+              ${items.map(e=>row(e,false)).join("")}
+              ${boxes.map(e=>row(e,true)).join("")}
+            </tbody>
+          </table>
+          </div>
+        </div>
+        <div class="section"><h3>Add item</h3>
+          <div class="ctl" style="flex-wrap:wrap;gap:8px;max-width:760px">
+            <input id="n-name" placeholder="name" style="font-family:var(--sans)"/>
+            <input id="n-cos" placeholder="cosmeticId" style="font-family:var(--mono)"/>
+            <select id="n-cur"><option>CREDITS</option><option>PREMIUM</option></select>
+            <input id="n-price" type="number" placeholder="price" style="width:90px"/>
+            <input id="n-cents" type="number" placeholder="cents (premium)" style="width:120px"/>
+            <input id="n-weight" type="number" placeholder="drop wt" style="width:90px"/>
+            <input id="n-worth" type="number" placeholder="worth" style="width:90px"/>
+            <button class="btn primary" id="n-add">Add</button>
+          </div>
+        </div>
+      </div>`;
+    v.querySelectorAll("[data-save]").forEach(b=>b.onclick=async()=>{
+      const tr=b.closest("tr");
+      const patch={ price:+tr.querySelector(".s-price").value, dropWeight:+tr.querySelector(".s-weight").value, worth:+tr.querySelector(".s-worth").value, enabled:tr.querySelector(".s-enabled").checked };
+      const cents=tr.querySelector(".s-cents"); if(cents) patch.priceCents=+cents.value||null;
+      try{ await api("/admintool/store/"+b.dataset.save,{method:"POST",body:patch}); toast("Saved "+b.dataset.save); }
+      catch(e){ toast(e.message,"var(--danger)"); }
+    });
+    v.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>confirmDanger("Delete item?","Removes it from the store.",async()=>{ await api("/admintool/store/"+b.dataset.del,{method:"DELETE"}); toast("Deleted"); renderStore(); }));
+    v.querySelector("#n-add").onclick=async()=>{
+      const body={ name:val("#n-name"), cosmeticId:val("#n-cos"), currency:val("#n-cur"), price:+val("#n-price")||0, priceCents:+val("#n-cents")||null, dropWeight:+val("#n-weight")||10, worth:+val("#n-worth")||0 };
+      if(!body.name)return toast("Name required","var(--danger)");
+      try{ await api("/admintool/store/item",{method:"POST",body}); toast("Item added"); renderStore(); }
+      catch(e){ toast(e.message,"var(--danger)"); }
+    };
+  }catch(err){ v.innerHTML=`<div class="empty">${esc(err.message)}</div>`; }
+}
+
+// ---------- Events tab ----------
+async function renderEvents(){
+  const v=document.getElementById("view");
+  v.innerHTML=`<div class="empty">loading…</div>`;
+  try{
+    const { events, modes, flags } = await api("/admintool/events");
+    state.events = events;
+    const modeOpts = (m) => `<option value="">— no mode (standard) —</option>` +
+      modes.map(md=>`<option value="${md.id}" ${m===md.id?"selected":""}>${esc(md.label)}</option>`).join("");
+    const cosmOpts = (sel) => `<option value="">— no cosmetic —</option>` +
+      state.catalogue.cosmetics.map(c=>`<option value="${c.id}" ${sel===c.id?"selected":""}>${esc(c.name)}</option>`).join("");
+    const curOpts = (sel) => `<option value="">— no currency —</option>` +
+      state.catalogue.currencies.map(c=>`<option value="${c}" ${sel===c?"selected":""}>${c}</option>`).join("");
+    const e = state.editingEvent || { name:"", mode:"", reward:{}, startsAt:"", endsAt:"" };
+    const editing = !!(state.editingEvent && state.editingEvent.id);
+
+    v.innerHTML = `
+      <div class="detail">
+        <div class="section"><h3>Active & scheduled events</h3>
+          <div class="results">${events.length? events.map(ev=>`
+            <div class="row">
+              <div class="av">★</div>
+              <div><div class="nm">${esc(ev.name)} ${ev.mode?`<span class="pill admin">${esc(ev.mode)}</span>`:""} ${ev.enabled?"":'<span class="pill">disabled</span>'}</div>
+                <div class="em">${esc(ev.id)} · reward: ${fmtReward(ev.reward)}</div></div>
+              <div class="meta">
+                <button class="btn" data-edit="${ev.id}">Edit</button>
+                <button class="btn" data-flags="${ev.id}">Flags</button>
+                <button class="btn danger" data-del="${ev.id}">Delete</button>
+              </div></div>`).join("") : '<div class="empty">no events yet</div>'}</div>
+        </div>
+
+        <div class="section"><h3>${editing?"Edit event":"Create event"}</h3>
+          <div class="ctl" style="flex-direction:column;align-items:stretch;gap:10px;max-width:520px">
+            <input id="e-name" placeholder="event name" value="${esc(e.name||"")}" style="font-family:var(--sans)"/>
+            <div class="ctl">
+              <label class="mono" style="font-size:12px;color:var(--dim);min-width:90px">Game mode</label>
+              <select id="e-mode">${modeOpts(e.mode)}</select>
+            </div>
+            <div class="ctl">
+              <label class="mono" style="font-size:12px;color:var(--dim);min-width:90px">Reward</label>
+              <select id="e-cur">${curOpts(e.reward?.currency)}</select>
+              <input id="e-amt" type="number" placeholder="amount" value="${e.reward?.amount||""}"/>
+              <select id="e-cos">${cosmOpts(e.reward?.cosmeticId)}</select>
+            </div>
+            <div class="ctl">
+              <label class="mono" style="font-size:12px;color:var(--dim);min-width:90px">Window</label>
+              <input id="e-start" type="datetime-local" style="font-family:var(--sans);width:auto"/>
+              <span class="mono" style="color:var(--faint)">→</span>
+              <input id="e-end" type="datetime-local" style="font-family:var(--sans);width:auto"/>
+            </div>
+            <div class="ctl">
+              <button class="btn primary" id="e-save">${editing?"Save changes":"Create event"}</button>
+              ${editing?`<button class="btn" id="e-cancel">Cancel</button>`:""}
+            </div>
+            <div class="hint">Mode is applied when an event host starts a match during the window. Reward is paid on a bounty take-down.</div>
+          </div>
+        </div>
+
+        <div id="flagPanel"></div>
+      </div>`;
+
+    v.querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>{ state.editingEvent=state.events.find(x=>x.id===b.dataset.edit); renderEvents(); });
+    v.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>confirmDanger("Delete event?","This removes the event and its effects.",async()=>{ await api("/admintool/events/"+b.dataset.del,{method:"DELETE"}); toast("Event deleted"); state.editingEvent=null; renderEvents(); }));
+    v.querySelectorAll("[data-flags]").forEach(b=>b.onclick=()=>openFlags(b.dataset.flags));
+    v.querySelector("#e-save").onclick=saveEvent;
+    if(editing) v.querySelector("#e-cancel").onclick=()=>{ state.editingEvent=null; renderEvents(); };
+  }catch(err){ v.innerHTML=`<div class="empty">${esc(err.message)}</div>`; }
+}
+
+function fmtReward(r){ if(!r)return "none"; const bits=[]; if(r.currency&&r.amount)bits.push(`${r.amount} ${r.currency}`); if(r.cosmeticId)bits.push(cosName(r.cosmeticId)); return bits.length?bits.join(" + "):"none"; }
+
+async function saveEvent(){
+  const body = {
+    name: val("#e-name"),
+    mode: val("#e-mode") || null,
+    reward: { currency: val("#e-cur")||null, amount: +val("#e-amt")||0, cosmeticId: val("#e-cos")||null },
+  };
+  const s=val("#e-start"), en=val("#e-end");
+  if(s) body.startsAt=new Date(s).toISOString();
+  if(en) body.endsAt=new Date(en).toISOString();
+  try{
+    const editing = state.editingEvent && state.editingEvent.id;
+    const path = editing ? "/admintool/events/"+state.editingEvent.id : "/admintool/events";
+    await api(path,{method:"POST",body});
+    toast(editing?"Event saved":"Event created");
+    state.editingEvent=null; renderEvents();
+  }catch(e){ toast(e.message,"var(--danger)"); }
+}
+
+// Per-event account flagging (bounty target / event host).
+async function openFlags(eventId){
+  const panel=document.getElementById("flagPanel");
+  panel.innerHTML=`<div class="section"><h3>Loading flags…</h3></div>`;
+  try{
+    const { flags } = await api("/admintool/events/"+eventId+"/flags");
+    const flagOpts = state.catalogue.eventFlags.map(f=>`<option value="${f.key}">${esc(f.label)}</option>`).join("");
+    panel.innerHTML=`
+      <div class="section"><h3>Flags for ${esc(eventId)}</h3>
+        <div class="results">${flags.length? flags.map(f=>`
+          <div class="row"><div class="av">⚑</div>
+            <div><div class="nm">${esc(f.userId)}</div><div class="em">${esc(f.flag)}</div></div>
+            <div class="meta"><button class="btn" data-unflag="${f.userId}">Remove</button></div></div>`).join("") : '<div class="empty">no flagged accounts</div>'}</div>
+        <div class="ctl" style="margin-top:12px">
+          <input id="f-user" placeholder="user id" style="font-family:var(--mono)"/>
+          <select id="f-flag">${flagOpts}</select>
+          <button class="btn primary" id="f-add">Flag account</button>
+        </div>
+        <div class="hint">Find a user's ID on the Accounts tab. Bounty Target = killing them pays the reward; Event Host = extended game control.</div>
+      </div>`;
+    panel.querySelector("#f-add").onclick=async()=>{
+      const userId=val("#f-user"), flag=val("#f-flag");
+      if(!userId)return toast("Enter a user id","var(--danger)");
+      try{ await api("/admintool/events/"+eventId+"/flag",{method:"POST",body:{userId,flag}}); toast("Account flagged"); openFlags(eventId); }
+      catch(e){ toast(e.message,"var(--danger)"); }
+    };
+    panel.querySelectorAll("[data-unflag]").forEach(b=>b.onclick=async()=>{ await api("/admintool/events/"+eventId+"/unflag",{method:"POST",body:{userId:b.dataset.unflag}}); toast("Flag removed"); openFlags(eventId); });
+  }catch(e){ panel.innerHTML=`<div class="section"><div class="empty">${esc(e.message)}</div></div>`; }
+}
+
+// ---------- Admins tab (superadmin) ----------
+async function renderAdmins(){
+  const v=document.getElementById("view");
+  v.innerHTML=`<div class="empty">loading…</div>`;
+  try{
+    const {admins}=await api("/admintool/admins"); state.admins=admins;
+    v.innerHTML=`
+      <div class="detail">
+        <div class="section"><h3>Current admins</h3>
+          <div class="results">${admins.map(a=>`
+            <div class="row"><div class="av">${esc(a.name[0])}</div>
+              <div><div class="nm">${esc(a.name)}</div><div class="em">${esc(a.email||a.id)}</div></div>
+              <div class="meta"><span class="pill admin">${esc(a.adminRole)}</span>
+                <button class="btn" data-demote="${a.id}">Revoke</button></div></div>`).join("")}</div>
+        </div>
+        <div class="section"><h3>Grant admin</h3>
+          <div class="ctl">
+            <input id="a-id" placeholder="user id" style="font-family:var(--mono)"/>
+            <select id="a-role"><option value="admin">admin</option><option value="superadmin">superadmin</option></select>
+            <button class="btn primary" id="a-grant">Grant role</button>
+          </div>
+          <div class="hint">find a user's ID on the Accounts tab.</div>
+        </div>
+      </div>`;
+    v.querySelector("#a-grant").onclick=()=>setRole(val("#a-id"),val("#a-role"));
+    v.querySelectorAll("[data-demote]").forEach(b=>b.onclick=()=>confirmDanger("Revoke admin?","They lose all console access.",()=>setRole(b.dataset.demote,null)));
+  }catch(e){ v.innerHTML=`<div class="empty">${esc(e.message)}</div>`; }
+}
+async function setRole(id,role){ if(!id)return toast("Enter a user id","var(--danger)");
+  try{ await api("/admintool/admins/"+id+"/role",{method:"POST",body:{role}}); toast(role?`Granted ${role}`:"Role revoked"); renderAdmins(); }
+  catch(e){ toast(e.message,"var(--danger)"); } }
+
+// ---------- danger confirm modal ----------
+function confirmDanger(title,body,onYes){
+  const bg=document.createElement("div"); bg.className="modal-bg";
+  bg.innerHTML=`<div class="modal"><h3>${esc(title)}</h3><p>${esc(body)}</p>
+    <div class="ctl"><button class="btn" id="no">Cancel</button><button class="btn danger" id="yes">Confirm</button></div></div>`;
+  document.body.appendChild(bg);
+  bg.querySelector("#no").onclick=()=>bg.remove();
+  bg.querySelector("#yes").onclick=()=>{ bg.remove(); onYes(); };
+  bg.onclick=e=>{ if(e.target===bg)bg.remove(); };
+}
+
+boot();
+</script>
+</body>
+</html>

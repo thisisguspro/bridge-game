@@ -1,0 +1,29 @@
+# Render Blueprint for BRIDGE.
+# This tells Render how to run the whole game as ONE free web service:
+# it builds the client and installs all the pieces, then runs the combined
+# server (backend API + game server + client) on a single port.
+#
+# You normally don't need to read this — Render reads it for you when you create
+# a "Blueprint" from your repo. See DEPLOY.md for the click-by-click steps.
+
+services:
+  - type: web
+    name: bridge-game
+    runtime: node
+    plan: free
+    rootDir: bridge-deploy
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      # A login secret. Render generates a random value automatically.
+      - key: JWT_SECRET
+        generateValue: true
+      # Shared service secret (kept internal). Also auto-generated.
+      - key: SERVICE_KEY
+        generateValue: true
+      # Allow guest play (no Google sign-in needed) — fine for playtesting.
+      - key: ALLOW_GUESTS
+        value: "true"
+      # The combined server serves everything on the port Render assigns.
+      - key: NODE_VERSION
+        value: "20"
