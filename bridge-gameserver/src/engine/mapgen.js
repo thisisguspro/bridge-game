@@ -237,4 +237,4 @@ export function frozenMap(id, name, players, seed) {
   return { ...generateMap({ players, seed, id, name }), procedural: false };
 }
 
-export { ROOM_LIBRARY, sizeFor };
+export { ROOM_LIBRARY, sizeFor, buildGeometry };

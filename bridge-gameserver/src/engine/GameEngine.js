@@ -33,7 +33,7 @@ let seq = 1;
 const newId = (p) => `${p}_${seq++}`;
 
 import { makeRng, shuffle } from "./rng.js";
-import { generateMap } from "./mapgen.js";
+import { generateMap, buildGeometry } from "./mapgen.js";
 
 export class GameEngine {
   constructor({ mapId = "nebula_drift", seed = null, config = {}, map = null } = {}) {
@@ -50,6 +50,29 @@ export class GameEngine {
     }
     if (!resolved) resolved = MAPS[resolvedMapId];
     if (!resolved) throw new Error(`Unknown map: ${resolvedMapId}`);
+    // Named/fixed maps (the MAPS table) were authored before spatial geometry
+    // existed, so they have rooms but no x/y layout — which left the client with
+    // "NO SPATIAL MAP" and no way to walk around. If a resolved map is missing
+    // geometry, generate it now from its room list. Named maps don't declare an
+    // adjacency graph (they're treated as fully reachable), so we synthesize a
+    // connected layout: a central spawn linked to a ring of the other rooms.
+    if (!resolved.geometry) {
+      const rooms = resolved.rooms || [];
+      const spawn = resolved.spawnRoom || rooms[0];
+      const adjacency = resolved.adjacency || (() => {
+        const adj = {}; rooms.forEach((r) => (adj[r] = []));
+        const others = rooms.filter((r) => r !== spawn);
+        // hub-and-spoke: spawn connects to all; ring connects neighbors so the
+        // layout spreads out instead of stacking on one point.
+        others.forEach((r) => { adj[spawn].push(r); adj[r].push(spawn); });
+        for (let i = 0; i < others.length; i++) {
+          const a = others[i], b = others[(i + 1) % others.length];
+          if (a !== b && !adj[a].includes(b)) { adj[a].push(b); adj[b].push(a); }
+        }
+        return adj;
+      })();
+      resolved = { ...resolved, adjacency, geometry: buildGeometry(rooms, adjacency, spawn) };
+    }
     this.config.mapId = resolved.id || resolvedMapId;
     this.map = resolved;
     this.mode = getMode(this.config.mode); // active game mode (null = base rules)
@@ -415,8 +438,12 @@ export class GameEngine {
     }
     const g = this.map.geometry?.rooms?.[room];
     if (g) {
-      // glide to the room center
+      // glide the avatar to the room center, and commit room membership now (the
+      // player chose to enter an adjacent room). The tick loop keeps x/y moving;
+      // committing p.room on intent keeps room-scoped logic responsive and matches
+      // how the click-to-move UI feels.
       p.tx = g.x + g.w / 2; p.ty = g.y + g.h / 2;
+      p.room = room;
     } else {
       p.room = room; // teleport (legacy/no-geometry)
     }

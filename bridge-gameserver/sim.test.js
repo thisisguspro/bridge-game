@@ -9,6 +9,17 @@ function section(t) { console.log("\n## " + t); }
 // Tasks are now timed mini-games: start, let server time pass, then complete.
 // This helper does the full flow for tests (advances the engine clock past the
 // task's minSeconds via ticks, then completes).
+// Place a player firmly in a room: set room AND snap x/y to its center so the
+// continuous-movement tick (_roomAt) agrees and won't relocate them. Needed now
+// that named maps carry geometry (players have real positions). Falls back to a
+// plain room set for maps without geometry.
+function place(g, playerId, room) {
+  const p = g.players.get(playerId);
+  const rect = g.map.geometry?.rooms?.[room];
+  if (rect) { p.x = p.tx = rect.x + rect.w / 2; p.y = p.ty = rect.y + rect.h / 2; }
+  p.room = room;
+}
+
 function doTask(g, playerId, taskId) {
   const p = g.players.get(playerId);
   const task = p.tasks.find((t) => t.id === taskId);
@@ -754,12 +765,15 @@ section("KotH: solo holder scores faster than when shared");
   const ids = []; for (let i = 0; i < 6; i++) ids.push(g.addPlayer("P" + i, { userId: "u" + i }));
   g.start();
   const hill = g.kothRoom;
-  // One player solo on the hill for 10s.
-  ids.forEach((id, i) => { g.players.get(id).room = (i === 0 ? hill : "nowhere_" + i); });
+  // One player solo on the hill; everyone else parked in a different real room.
+  const offHill = g.map.rooms.find((r) => r !== hill) || hill;
+  ids.forEach((id, i) => { place(g, id, i === 0 ? hill : offHill); });
+  // ensure the non-hill players aren't counted as on the hill
+  ids.forEach((id, i) => { if (i !== 0 && g.players.get(id).room === hill) place(g, id, offHill); });
   g.tick(10);
   const solo = g.players.get(ids[0]).kothScore;
   // Now two players share for 10s.
-  g.players.get(ids[1]).room = hill;
+  place(g, ids[1], hill);
   const beforeShared = g.players.get(ids[1]).kothScore;
   g.tick(10);
   const sharedGain = g.players.get(ids[1]).kothScore - beforeShared;
