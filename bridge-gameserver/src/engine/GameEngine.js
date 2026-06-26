@@ -456,6 +456,32 @@ export class GameEngine {
     return { recipients };
   }
 
+  // ---------- player reports ----------
+  // A player flags another for review (e.g. a name or behavior that slipped past
+  // the filter). We collect reports so the net layer can forward them to the
+  // backend for moderation. Deliberately lightweight: it doesn't punish anyone
+  // in-match, it just records the flag.
+  reportPlayer(reporterId, targetId, reason = null) {
+    const reporter = this._player(reporterId);
+    const target = this.players.get(targetId);
+    if (!target) throw new Error("No such player to report.");
+    if (targetId === reporterId) throw new Error("You can't report yourself.");
+    this._reports = this._reports || [];
+    // de-dupe: one report per reporter->target
+    if (this._reports.some((r) => r.reporterId === reporterId && r.targetId === targetId)) {
+      return { ok: true, deduped: true };
+    }
+    this._reports.push({
+      reporterId, reporterName: reporter.name,
+      targetId, targetName: target.name,
+      reason: reason ? String(reason).slice(0, 120) : "unspecified",
+      at: this.now, matchId: this.id || null,
+    });
+    this._log("player_reported", { targetId, private: true, recipients: [reporterId] });
+    return { ok: true };
+  }
+  drainReports() { const r = this._reports || []; this._reports = []; return r; }
+
   // ---------- emotes ----------
   // An expressive emote pops a bubble above the player for same-room viewers and
   // carries a sound cue. Cosmetic emotes the player owns are allowed too (passed
@@ -983,13 +1009,13 @@ export class GameEngine {
     if (task.done) throw new Error("Already done.");
     if (p.room !== task.room) throw new Error("You must be in the task's room.");
     if (this._tasksFrozen()) throw new Error("Systems are EMP-locked — repair the outage first.");
-    // Must have been started, and enough server-time must have passed.
+    // Must have been started. We no longer enforce a minimum duration — when the
+    // player solves the mini-game the client reports completion and it counts
+    // immediately (no artificial wait). The abandon timeout still applies so a
+    // stale "started" task can be restarted cleanly.
     if (task.startedAt == null) throw new Error("Start the task first.");
     const elapsed = this.now - task.startedAt;
     if (elapsed > TASK.ABANDON_SEC) { task.startedAt = null; throw new Error("Task timed out — start it again."); }
-    if (elapsed < task.minSeconds - TASK.EARLY_GRACE_SEC) {
-      throw new Error("Too fast — finish the mini-game."); // the anti-cheat gate
-    }
     task.done = true;
     task.startedAt = null;
     this._log("task_attempt", { id: playerId, plane: p.plane });

@@ -329,6 +329,18 @@ function Match({ view, roomId, conn, events }) {
   const isImpostor = you.role === "impostor";
   const onEnergy = you.plane === "energy";
 
+  // siren when a wave begins (rising edge of view.attack), and a softer beep when
+  // an attack is first warned. Plays once per event.
+  const prevAttackRef = useRef(false);
+  const prevWarnRef = useRef(false);
+  useEffect(() => {
+    const nowAttack = !!view.attack;
+    if (nowAttack && !prevAttackRef.current) playSound("attack_warning");
+    prevAttackRef.current = nowAttack;
+    const nowWarn = !!view.attackWarning;
+    if (nowWarn && !prevWarnRef.current) playSound("attack_warning");
+    prevWarnRef.current = nowWarn;
+  }, [view.attack, view.attackWarning]);
   const act = (fn) => (e) => { fn(); if (e) pop(e.clientX, e.clientY); };
 
   return (
@@ -504,6 +516,13 @@ function Match({ view, roomId, conn, events }) {
             rail, which is hidden during a match. */}
         {escOpen && <EscMenu onResume={() => setEscOpen(false)}
           onSurrender={() => { conn.surrender(roomId); setEscOpen(false); }} />}
+
+        {/* UNDER ATTACK: full-screen pulsing red border so everyone knows to run
+            to the turrets. A siren plays once when the wave begins. */}
+        {view.attack && !onEnergy && (
+          <div style={{ position: "absolute", inset: 0, zIndex: 60, pointerEvents: "none",
+            boxShadow: "inset 0 0 120px 12px rgba(255,45,77,0.55)", animation: "attackpulse 1.1s ease-in-out infinite" }} />
+        )}
 
         {/* ATTACK WAVE: banner + turret combat. Shows when enemy planes are inbound. */}
         {view.attack && (

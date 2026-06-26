@@ -62,6 +62,7 @@ export function createGameConnection({ onState, onEvents, onError, onConnect, on
     vote: (roomId, targetId) => socket.emit("vote", { roomId, targetId }),
     voiceCommand: (roomId, command, targetId) => socket.emit("voice_command", { roomId, command, targetId }),
     emote: (roomId, emote) => socket.emit("emote", { roomId, emote }),
+    reportPlayer: (roomId, targetId, reason) => socket.emit("report_player", { roomId, targetId, reason }),
     perkVote: (roomId, perkKeys) => socket.emit("vote_perk", { roomId, perkKeys }),
     disconnect: () => socket.close(),
   };

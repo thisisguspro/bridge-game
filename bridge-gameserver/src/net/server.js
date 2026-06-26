@@ -287,6 +287,15 @@ io.on("connection", (socket) => {
   socket.on("voice_command", ({ roomId, command, targetId }) => act(roomId, (r, pid) => r.engine.sendVoiceCommand(pid, command, targetId ?? null)));
   socket.on("speech", ({ roomId, text }) => act(roomId, (r, pid) => r.engine.sendSpeech(pid, text ?? null)));
   socket.on("emote", ({ roomId, emote }) => act(roomId, (r, pid) => r.engine.sendEmote(pid, emote)));
+  socket.on("report_player", ({ roomId, targetId, reason }) => {
+    act(roomId, (r, pid) => r.engine.reportPlayer(pid, targetId, reason));
+    const room = rooms.get(roomId);
+    if (room) for (const rep of room.engine.drainReports()) {
+      // Forward to the backend for moderation review (fire-and-forget).
+      try { if (typeof reportPlayerModeration === "function") reportPlayerModeration(rep); } catch { /* best-effort */ }
+      console.log("[moderation] player reported:", rep.targetName, "by", rep.reporterName, "—", rep.reason);
+    }
+  });
 
   socket.on("disconnect", () => {
     for (const room of rooms.rooms.values()) {

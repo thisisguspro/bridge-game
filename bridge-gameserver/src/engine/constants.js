@@ -289,6 +289,7 @@ export const MINIGAMES = {
   code_sequence: { key: "code_sequence", label: "Enter the code",        minSeconds: 10, energy: false },
   alignment:     { key: "alignment",     label: "Align the dish",        minSeconds: 12, energy: false },
   hold_timing:   { key: "hold_timing",   label: "Hold to calibrate",     minSeconds: 13, energy: false },
+  water_sort:    { key: "water_sort",    label: "Sort the coolant",      minSeconds: 12, energy: false },
   // energy-plane variants — same skills, ghostly theme, a touch quicker so being
   // downed still feels productive rather than punishing.
   flux_route:    { key: "flux_route",    label: "Route the flux",        minSeconds: 10, energy: true },
@@ -305,7 +306,7 @@ export const TASK = {
   GHOST_POWER_MULT: 0.5,
 };
 // Physical and energy mini-game pools to assign from.
-const PHYSICAL_GAMES = ["wire_connect", "code_sequence", "alignment", "hold_timing"];
+const PHYSICAL_GAMES = ["wire_connect", "code_sequence", "alignment", "water_sort", "hold_timing"];
 const ENERGY_GAMES = ["flux_route", "phase_match"];
 export { PHYSICAL_GAMES, ENERGY_GAMES };
 

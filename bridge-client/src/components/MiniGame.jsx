@@ -1,32 +1,18 @@
 import { useEffect, useRef, useState } from "react";
 
-// Task mini-games. When a player starts a task, the engine records the start time
-// and the SERVER won't accept completion until `minSeconds` have elapsed — so
-// these games are paced to take roughly that long, and we also gate the
-// "Complete" callback on the server-min via a ready timer. Each game calls
-// onSolved() when the player finishes the interaction AND the min time is up.
-//
-// Games: wire_connect, code_sequence, alignment, hold_timing (physical) and
-// flux_route, phase_match (energy-plane variants — same skills, cyan theme).
+// Task mini-games. The player solves the interaction and it completes immediately
+// — there's no artificial wait (the server no longer enforces a minimum time).
+// Each game calls onComplete() when solved; we then fire onSolved() right away.
 export default function MiniGame({ task, energy, onSolved, onCancel }) {
-  const min = task.minSeconds || 12;
-  const startedRef = useRef(Date.now());
-  const [elapsed, setElapsed] = useState(0);
   const [solvedInteraction, setSolvedInteraction] = useState(false);
-  useEffect(() => {
-    const t = setInterval(() => setElapsed((Date.now() - startedRef.current) / 1000), 200);
-    return () => clearInterval(t);
-  }, []);
-  const ready = elapsed >= min - 0.5;            // matches the server's grace
-  const done = solvedInteraction && ready;
-  useEffect(() => { if (done) onSolved(); }, [done]); // eslint-disable-line
+  useEffect(() => { if (solvedInteraction) { const t = setTimeout(onSolved, 450); return () => clearTimeout(t); } }, [solvedInteraction]); // eslint-disable-line
 
   const accent = energy ? "var(--volt)" : "var(--gold)";
   const Game = GAMES[task.game] || WireConnect;
 
   return (
-    <div style={overlay} onClick={(e) => { if (e.target === e.currentTarget) onCancel(); }}>
-      <div style={{ ...panel, borderColor: accent }} onClick={(e) => e.stopPropagation()}>
+    <div style={overlay} onClick={(e) => { if (e.target === e.currentTarget && !solvedInteraction) onCancel(); }}>
+      <div style={{ ...panel, borderColor: solvedInteraction ? "var(--volt)" : accent }} onClick={(e) => e.stopPropagation()}>
         <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
           <span className="kanji" style={{ fontSize: 15, color: accent }}>{energy ? "霊務" : "作業"}</span>
           <span className="impactf faint" style={{ fontSize: 10 }}>{task.room}</span>
@@ -34,20 +20,20 @@ export default function MiniGame({ task, energy, onSolved, onCancel }) {
         <div className="display" style={{ fontSize: 26, lineHeight: 0.9, marginBottom: 2 }}>{task.name}</div>
         <div className="faint" style={{ fontSize: 11, marginBottom: 14 }}>{GAME_LABELS[task.game] || "Complete the task"}</div>
 
-        <Game accent={accent} onComplete={() => setSolvedInteraction(true)} solved={solvedInteraction} />
+        {solvedInteraction ? (
+          <div style={{ textAlign: "center", padding: "26px 0" }}>
+            <div className="display" style={{ fontSize: 40, color: "var(--volt)", lineHeight: 1 }}>✓ COMPLETE</div>
+            <div className="kanji" style={{ fontSize: 16, color: "var(--volt)", marginTop: 4 }}>完了</div>
+          </div>
+        ) : (
+          <Game accent={accent} onComplete={() => setSolvedInteraction(true)} solved={solvedInteraction} />
+        )}
 
-        {/* progress toward the server-enforced minimum */}
-        <div style={{ marginTop: 16 }}>
-          <div style={{ height: 6, background: "var(--ink)", border: "1px solid var(--line)", overflow: "hidden" }}>
-            <div style={{ height: "100%", width: `${Math.min(100, (elapsed / min) * 100)}%`, background: accent, transition: "width 0.2s linear" }} />
+        {!solvedInteraction && (
+          <div style={{ marginTop: 16, display: "flex", justifyContent: "flex-end" }}>
+            <button className="btn btn-ghost" style={{ fontSize: 11, padding: "6px 12px" }} onClick={onCancel}>Cancel (Esc)</button>
           </div>
-          <div className="row" style={{ justifyContent: "space-between", marginTop: 6 }}>
-            <button className="btn btn-ghost" style={{ fontSize: 11, padding: "6px 12px" }} onClick={onCancel}>Cancel</button>
-            <span className="impactf" style={{ fontSize: 11, color: done ? accent : "var(--dim)" }}>
-              {solvedInteraction ? (ready ? "DONE" : `STABILIZING… ${Math.ceil(min - elapsed)}s`) : "IN PROGRESS"}
-            </span>
-          </div>
-        </div>
+        )}
       </div>
     </div>
   );
@@ -58,6 +44,7 @@ const GAME_LABELS = {
   code_sequence: "Repeat the highlighted sequence.",
   alignment: "Slide both rings into the green zone.",
   hold_timing: "Hold the button while the needle is in the band.",
+  water_sort: "Pour to sort each color into its own tube.",
   flux_route: "Route the flux through every node.",
   phase_match: "Match the phase to the target.",
 };
@@ -251,7 +238,79 @@ function PhaseMatch({ accent, onComplete }) {
 const GAMES = {
   wire_connect: WireConnect, code_sequence: CodeSequence, alignment: Alignment,
   hold_timing: HoldTiming, flux_route: FluxRoute, phase_match: PhaseMatch,
+  water_sort: WaterSort,
 };
+
+/* ---------------- water sort (pour to separate colors) ---------------- */
+// Classic tube-sort: tap a tube to pick it up, tap another to pour. You can pour
+// the top color block onto a matching top color (or an empty tube) if there's
+// room. Solved when every tube is empty or a single solid color. Forgiving:
+// includes a Reset if you get stuck. No timer pressure — completes on solve.
+function WaterSort({ accent, onComplete, solved }) {
+  const PALETTE = ["#ff4d6d", "#46e6ff", "#ffc83d", "#7CFF6B"];
+  const CAP = 4; // segments per tube
+  // build a solved state then scramble by legal-ish shuffling of segments
+  const makePuzzle = () => {
+    // 4 colors x4 segments, plus 2 empty tubes
+    let segs = [];
+    PALETTE.forEach((c) => { for (let i = 0; i < CAP; i++) segs.push(c); });
+    // shuffle all segments
+    for (let i = segs.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [segs[i], segs[j]] = [segs[j], segs[i]]; }
+    const tubes = [];
+    for (let t = 0; t < PALETTE.length; t++) tubes.push(segs.slice(t * CAP, t * CAP + CAP));
+    tubes.push([]); tubes.push([]); // two empty work tubes
+    return tubes;
+  };
+  const [tubes, setTubes] = useState(makePuzzle);
+  const [picked, setPicked] = useState(null);
+
+  const isSolved = (state) => state.every((t) => t.length === 0 || (t.length === CAP && t.every((c) => c === t[0])));
+  useEffect(() => { if (!solved && isSolved(tubes)) onComplete(); }, [tubes]); // eslint-disable-line
+
+  const topColor = (t) => (t.length ? t[t.length - 1] : null);
+  const topRun = (t) => { // how many of the same color are on top
+    if (!t.length) return 0; const c = t[t.length - 1]; let n = 0;
+    for (let i = t.length - 1; i >= 0 && t[i] === c; i--) n++; return n;
+  };
+
+  const tap = (idx) => {
+    if (picked == null) { if (tubes[idx].length) setPicked(idx); return; }
+    if (picked === idx) { setPicked(null); return; }
+    // attempt pour picked -> idx
+    const from = tubes[picked], to = tubes[idx];
+    const c = topColor(from);
+    const room = CAP - to.length;
+    if (c && room > 0 && (to.length === 0 || topColor(to) === c)) {
+      const move = Math.min(topRun(from), room);
+      const next = tubes.map((t) => [...t]);
+      for (let i = 0; i < move; i++) { next[idx].push(next[picked].pop()); }
+      setTubes(next);
+    }
+    setPicked(null);
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
+      <div style={{ display: "flex", gap: 12, justifyContent: "center", padding: "4px 0" }}>
+        {tubes.map((t, i) => (
+          <button key={i} onClick={() => tap(i)}
+            style={{ width: 34, height: CAP * 22 + 8, padding: 3, display: "flex", flexDirection: "column-reverse",
+              background: "rgba(255,255,255,0.04)", border: `2px solid ${picked === i ? accent : "var(--line)"}`,
+              borderTop: "none", borderRadius: "0 0 16px 16px", cursor: "pointer",
+              transform: picked === i ? "translateY(-6px)" : "none", transition: "transform 0.12s" }}>
+            {t.map((c, j) => (
+              <div key={j} style={{ height: 22, background: c, borderRadius: j === t.length - 1 ? "3px 3px 0 0" : 0, margin: "1px 0" }} />
+            ))}
+          </button>
+        ))}
+      </div>
+      <div className="row gap-s">
+        <button className="btn btn-ghost" style={{ fontSize: 10, padding: "4px 10px" }} onClick={() => { setTubes(makePuzzle()); setPicked(null); }}>Reset</button>
+        <span className="impactf faint" style={{ fontSize: 10, alignSelf: "center" }}>Pour matching colors together until each tube is one color</span>
+      </div>
+    </div>
+  );
+}
 
 function shuffle(a) { const r = [...a]; for (let i = r.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [r[i], r[j]] = [r[j], r[i]]; } return r; }
 

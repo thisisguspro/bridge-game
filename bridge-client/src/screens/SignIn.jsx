@@ -18,7 +18,7 @@ export default function SignIn({ onSignedIn }) {
     setBusy(true); setErr(null);
     try {
       const res = await api.signIn({ name: name.trim(), email: email.trim() || undefined, acceptedTos });
-      // If the backend changed the name (PG-13 policy), tell the player before entering.
+      // If the backend changed the name (naming policy), tell the player before entering.
       if (res.nameChanged && res.user?.name) {
         setNameNotice(res.user.name);
         setShowTos(false);
@@ -50,7 +50,7 @@ export default function SignIn({ onSignedIn }) {
               The call sign you chose didn't pass our family-friendly naming rules, so the system assigned you:
             </p>
             <div className="display" style={{ fontSize: 30, color: "var(--gold)", margin: "12px 0" }}>{nameNotice}</div>
-            <p className="faint" style={{ fontSize: 12, marginBottom: 18 }}>You can change cosmetics and more later — but keep names PG-13.</p>
+            <p className="faint" style={{ fontSize: 12, marginBottom: 18 }}>You can change cosmetics and more later — but keep names friendly.</p>
             <button className="btn btn-hot" style={{ width: "100%", fontSize: 16 }}
               onClick={async () => { const u = await api.me().catch(() => null); onSignedIn(u?.user || { name: nameNotice }); }}>
               Continue →
@@ -101,20 +101,21 @@ export default function SignIn({ onSignedIn }) {
 
 // Among Us-style Terms of Service: friendly but clear; emphasizes conduct and the
 // naming policy (over-PG-13 names get auto-changed). Shown only on first signup.
+// Friendly but clear Terms of Service. Emphasizes conduct + the naming policy
+// (names that aren't family-friendly get auto-changed). Shown only on first signup.
 function TosModal({ checked, setChecked, onAccept, onCancel, busy }) {
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 500, display: "grid", placeItems: "center", background: "rgba(5,4,9,0.8)", backdropFilter: "blur(4px)" }}>
       <div className="panel panel-hot" style={{ width: 520, maxWidth: "92vw", maxHeight: "86vh", overflow: "auto", padding: 26, background: "var(--ink-2)", textAlign: "left" }}>
         <div className="kanji" style={{ fontSize: 18, color: "var(--hot)" }}>規約</div>
-        <div className="display" style={{ fontSize: 30, marginBottom: 8 }}>TERMS OF SERVICE</div>
+        <div className="display" style={{ fontSize: 30, marginBottom: 8 }}>HOUSE RULES</div>
         <p style={{ fontSize: 13.5, lineHeight: 1.55, color: "var(--dim)" }}>
-          Welcome aboard, pilot! Before you launch, a few ground rules to keep BRIDGE fun and safe for everyone:
+          Welcome aboard, pilot! A few ground rules to keep BRIDGE fun and welcoming for everyone:
         </p>
         <ul style={{ fontSize: 13.5, lineHeight: 1.6, paddingLeft: 18 }}>
           <li><b>Be cool to your crew.</b> No harassment, hate speech, threats, or bullying. Treat people the way you'd want your own crew to treat you.</li>
-          <li><b>Keep it PG-13.</b> That includes your name. Call signs that aren't family-friendly are automatically changed to <b>"Child" + a random number</b> assigned by the system. No profanity, slurs, sexual content, or impersonation.</li>
+          <li><b>Keep it friendly.</b> That includes your name. Call signs that aren't friendly are automatically changed to <b>"Child" + a random number</b> by the system. No profanity, slurs, sexual content, or impersonation.</li>
           <li><b>No cheating or exploiting.</b> Hacking, botting, or abusing bugs can get your account suspended.</li>
-          <li><b>You're 13 or older.</b> BRIDGE isn't intended for children under 13.</li>
           <li><b>Play fair, have fun.</b> Sabotage your crewmates <i>in the game</i> — not in real life. 🚀</li>
         </ul>
         <p className="faint" style={{ fontSize: 12, lineHeight: 1.5 }}>
@@ -122,7 +123,7 @@ function TosModal({ checked, setChecked, onAccept, onCancel, busy }) {
         </p>
         <label style={{ display: "flex", alignItems: "center", gap: 10, margin: "14px 0", fontSize: 14, cursor: "pointer" }}>
           <input type="checkbox" checked={checked} onChange={(e) => setChecked(e.target.checked)} style={{ width: 18, height: 18, accentColor: "var(--hot)" }} />
-          I'm 13 or older and I agree to the Terms of Service.
+          I agree to be kind and follow the rules.
         </label>
         <div className="row gap-s">
           <button className="btn btn-ghost" style={{ flex: 1, fontSize: 14 }} onClick={onCancel}>Cancel</button>

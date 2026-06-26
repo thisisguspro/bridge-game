@@ -10,7 +10,7 @@ import { EmoteBubble } from "./Emotes.jsx";
 // motion looks smooth.
 //
 // Iso projection: screen = ( (x - y) * COS, (x + y) * SIN ) — classic 2:1 iso.
-const ISO = { cos: 0.86, sin: 0.5, scale: 0.62 };
+const ISO = { cos: 0.86, sin: 0.5, scale: 0.95 };
 function toScreen(wx, wy) { return { sx: (wx - wy) * ISO.cos * ISO.scale, sy: (wx + wy) * ISO.sin * ISO.scale }; }
 
 // ---- Room art image cache ----
@@ -155,36 +155,48 @@ export default function IsoStage({ view, emoteBubbles = {} }) {
           ctx.strokeStyle = "rgba(255,45,77,0.8)"; ctx.lineWidth = 2.5; ctx.stroke();
         }
       } else {
-        // fallback: drawn diamond + a subtle iso tech-grid texture so the floor
-        // doesn't read as flat. Keeps the game fully playable with no art present.
-        ctx.fillStyle = here ? "#241d33" : "#1a1626"; ctx.fill();
-        // clip to the room and draw grid lines along the two iso axes
+        // Placeholder tech-panel floor (until room art PNGs are added): a dark
+        // base, tiled panel seams, an inset frame, and corner brackets — so the
+        // floor reads as a real ship deck rather than a flat diamond.
+        const baseFill = here ? "#221b30" : "#16121f";
+        ctx.fillStyle = baseFill; ctx.fill();
         ctx.save();
         ctx.clip();
-        ctx.lineWidth = 1;
-        ctx.strokeStyle = here ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.04)";
-        const STEP = 56; // world units between grid lines
+        // panel seams (larger tiles than before, brighter, with a faint highlight)
+        const STEP = 70;
         for (let gx = 0; gx <= r.w; gx += STEP) {
           const p0 = toScreen(r.x + gx, r.y), p1 = toScreen(r.x + gx, r.y + r.h);
+          ctx.strokeStyle = "rgba(0,0,0,0.35)"; ctx.lineWidth = 2;
           ctx.beginPath(); ctx.moveTo(p0.sx + ox, p0.sy + oy); ctx.lineTo(p1.sx + ox, p1.sy + oy); ctx.stroke();
+          ctx.strokeStyle = here ? "rgba(255,120,140,0.07)" : "rgba(150,140,180,0.07)"; ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.moveTo(p0.sx + ox + 1, p0.sy + oy); ctx.lineTo(p1.sx + ox + 1, p1.sy + oy); ctx.stroke();
         }
         for (let gy = 0; gy <= r.h; gy += STEP) {
           const p0 = toScreen(r.x, r.y + gy), p1 = toScreen(r.x + r.w, r.y + gy);
+          ctx.strokeStyle = "rgba(0,0,0,0.35)"; ctx.lineWidth = 2;
           ctx.beginPath(); ctx.moveTo(p0.sx + ox, p0.sy + oy); ctx.lineTo(p1.sx + ox, p1.sy + oy); ctx.stroke();
+          ctx.strokeStyle = here ? "rgba(255,120,140,0.07)" : "rgba(150,140,180,0.07)"; ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.moveTo(p0.sx + ox, p0.sy + oy + 1); ctx.lineTo(p1.sx + ox, p1.sy + oy + 1); ctx.stroke();
         }
-        // a faint accent ring near the room edge for depth
-        const inset = 14;
+        // inset frame for depth
+        const inset = 16;
         const e = [toScreen(r.x + inset, r.y + inset), toScreen(r.x + r.w - inset, r.y + inset),
                    toScreen(r.x + r.w - inset, r.y + r.h - inset), toScreen(r.x + inset, r.y + r.h - inset)];
-        ctx.strokeStyle = here ? "rgba(255,45,77,0.18)" : "rgba(90,81,112,0.18)";
+        ctx.strokeStyle = here ? "rgba(255,45,77,0.25)" : "rgba(110,100,135,0.22)";
+        ctx.lineWidth = 2;
         ctx.beginPath(); ctx.moveTo(e[0].sx + ox, e[0].sy + oy);
         for (let i = 1; i < 4; i++) ctx.lineTo(e[i].sx + ox, e[i].sy + oy); ctx.closePath(); ctx.stroke();
+        // center hazard ring accent
+        const cc = toScreen(r.x + r.w / 2, r.y + r.h / 2);
+        ctx.strokeStyle = here ? "rgba(255,45,77,0.12)" : "rgba(110,100,135,0.1)";
+        ctx.lineWidth = 6; ctx.beginPath();
+        ctx.ellipse(cc.sx + ox, cc.sy + oy, r.w * ISO.cos * ISO.scale * 0.28, r.h * ISO.sin * ISO.scale * 0.28, 0, 0, Math.PI * 2); ctx.stroke();
         ctx.restore();
-        // room outline
+        // room outline (corner-bracketed look via thicker outline)
         ctx.beginPath(); ctx.moveTo(c[0].x, c[0].y);
         for (let i = 1; i < 4; i++) ctx.lineTo(c[i].x, c[i].y); ctx.closePath();
-        ctx.strokeStyle = here ? "rgba(255,45,77,0.7)" : "rgba(90,81,112,0.5)";
-        ctx.lineWidth = here ? 2.5 : 1.5; ctx.stroke();
+        ctx.strokeStyle = here ? "rgba(255,45,77,0.8)" : "rgba(110,100,135,0.55)";
+        ctx.lineWidth = here ? 3 : 2; ctx.stroke();
         ctx.restore();
       }
       // room label
@@ -251,7 +263,7 @@ export default function IsoStage({ view, emoteBubbles = {} }) {
           const isYou = p.id === view.you?.id;
           return (
             <div key={p.id} style={{ position: "absolute", left: s.sx + ox, top: s.sy + oy }}>
-              <IsoPilot player={p} facing={r.facing || "SE"} moving={r.moving} isYou={isYou}
+              <IsoPilot player={p} facing={r.facing || "SE"} moving={r.moving} isYou={isYou} scale={0.7}
                 showSymbol={a11y.colorblindShapes} showLabel={a11y.colorblindLabels} />
               {emoteBubbles[p.id] && <EmoteBubble emoji={emoteBubbles[p.id].emoji} />}
               {a11y.ghostReadability && (p.plane === "energy" || p.plane === "eliminated") && (
