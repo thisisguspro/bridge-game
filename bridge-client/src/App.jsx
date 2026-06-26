@@ -16,7 +16,8 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
   const [catalogue, setCatalogue] = useState(null);
-  const [screen, setScreen] = useState("hangar");
+  const [screen, setScreen] = useState("play");
+  const [matchActive, setMatchActive] = useState(false);
 
   const loadAll = useCallback(async () => {
     const [p, c] = await Promise.all([api.getProfile(), api.getCatalogue()]);
@@ -34,7 +35,7 @@ export default function App() {
     })();
   }, [loadAll]);
 
-  const onSignedIn = async (u) => { setUser(u); await loadAll(); setScreen("hangar"); };
+  const onSignedIn = async (u) => { setUser(u); await loadAll(); setScreen("play"); };
   const refreshProfile = useCallback(async () => { setProfile(await api.getProfile()); }, []);
 
   if (!booted) return <Boot />;
@@ -42,15 +43,15 @@ export default function App() {
 
   return (
     <div style={{ height: "100%", display: "flex", background: "var(--ink)" }}>
-      <NavRail screen={screen} setScreen={setScreen} user={user} profile={profile}
-        onSignOut={() => { api.signOut(); setUser(null); setProfile(null); }} />
+      {!matchActive && <NavRail screen={screen} setScreen={setScreen} user={user} profile={profile}
+        onSignOut={() => { api.signOut(); setUser(null); setProfile(null); }} />}
       <div style={{ flex: 1, position: "relative", overflow: "hidden" }}>
         {screen === "hangar" && <Hangar user={user} profile={profile} catalogue={catalogue} />}
         {screen === "locker" && <Locker profile={profile} catalogue={catalogue} onChange={refreshProfile} />}
         {screen === "shop" && <Shop profile={profile} catalogue={catalogue} onChange={refreshProfile} />}
         {screen === "wheels" && <Wheels profile={profile} catalogue={catalogue} />}
         {screen === "settings" && <Settings />}
-        {screen === "play" && <Play user={user} profile={profile} />}
+        {screen === "play" && <Play user={user} profile={profile} onMatchActiveChange={setMatchActive} />}
       </div>
     </div>
   );

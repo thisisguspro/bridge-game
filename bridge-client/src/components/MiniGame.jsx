@@ -150,6 +150,7 @@ function HoldTiming({ accent, onComplete }) {
   const [pos, setPos] = useState(0);
   const [charge, setCharge] = useState(0);
   const dir = useRef(1); const holding = useRef(false);
+  const posRef = useRef(0); posRef.current = pos;
   useEffect(() => {
     let raf; const loop = () => {
       setPos((p) => { let n = p + dir.current * 1.6; if (n > 100) { n = 100; dir.current = -1; } if (n < 0) { n = 0; dir.current = 1; } return n; });
@@ -163,7 +164,6 @@ function HoldTiming({ accent, onComplete }) {
     };
     raf = requestAnimationFrame(loop); return () => cancelAnimationFrame(raf);
   }, []); // eslint-disable-line
-  const posRef = useRef(0); posRef.current = pos;
   return (
     <div style={{ padding: "4px 10px" }} onMouseDown={() => (holding.current = true)} onMouseUp={() => (holding.current = false)} onMouseLeave={() => (holding.current = false)}>
       <div style={{ position: "relative", height: 28, background: "var(--ink)", border: "1px solid var(--line)", marginBottom: 10 }}>

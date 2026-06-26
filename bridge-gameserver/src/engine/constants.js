@@ -59,6 +59,76 @@ export const JOURNEY = {
   ENGINE_SPEED_PER_SEC: 5,
 };
 
+// ---- Helm: engines<->shields power allocation ----
+// One slider, set at the Helm by anyone standing there. allocation 0..1:
+//   0 = ALL power to SHIELDS  -> ship slow (no journey), strong shields (low dmg)
+//   1 = ALL power to ENGINES  -> ship fast (full journey speed), shields off (high dmg)
+// The actual allocation RAMPS toward the target, not instantly: slowing down
+// (toward shields) is quick, speeding up (toward engines) is slow. Perks can
+// scale these ramp rates.
+export const HELM = {
+  START_ALLOCATION: 0.5,          // balanced at match start
+  SLOWDOWN_SECONDS: 5,            // time to ramp fully toward shields (0)
+  SPEEDUP_SECONDS: 15,            // time to ramp fully toward engines (1)
+  // journey speed is ENGINE_SPEED_PER_SEC * allocation
+  // shield strength (damage reduction) scales with (1 - allocation)
+};
+
+// Attacks are announced this many seconds before they hit, so crew can rush to
+// the Helm (dump power to shields / slow down) and man the turrets.
+export const ATTACK_WARNING_SECONDS = 10;
+
+// ---- Emotes ----
+// In-match expressive emotes (separate from voice commands). Each broadcasts a
+// bubble to same-room players + an optional sound cue. `anime` ones lean into the
+// chibi/anime feel. Cosmetic emotes the player owns can extend this at runtime;
+// these are the always-available base set.
+export const EMOTES = {
+  WAVE:      { key: "WAVE",      emoji: "👋", label: "Wave",        kanji: "やあ",   sound: "emote_pop" },
+  LAUGH:     { key: "LAUGH",     emoji: "😂", label: "Laugh",       kanji: "笑",     sound: "emote_laugh" },
+  CRY:       { key: "CRY",       emoji: "😭", label: "Cry",         kanji: "泣",     sound: "emote_cry" },
+  ANGRY:     { key: "ANGRY",     emoji: "😡", label: "Angry",       kanji: "怒",     sound: "emote_angry" },
+  SHOCK:     { key: "SHOCK",     emoji: "😱", label: "Shocked",     kanji: "驚",     sound: "emote_gasp" },
+  SMUG:      { key: "SMUG",      emoji: "😏", label: "Smug",        kanji: "ふっ",   sound: "emote_pop" },
+  HEART:     { key: "HEART",     emoji: "💖", label: "Heart",       kanji: "好き",   sound: "emote_sparkle" },
+  SWEAT:     { key: "SWEAT",     emoji: "😅", label: "Nervous",     kanji: "汗",     sound: "emote_pop" },
+  THINK:     { key: "THINK",     emoji: "🤔", label: "Thinking",    kanji: "考",     sound: "emote_pop" },
+  SLEEP:     { key: "SLEEP",     emoji: "😴", label: "Bored",       kanji: "眠",     sound: "emote_pop" },
+  SALUTE:    { key: "SALUTE",    emoji: "🫡", label: "Salute",      kanji: "敬礼",   sound: "emote_pop" },
+  SPARKLE:   { key: "SPARKLE",   emoji: "✨", label: "Sparkle",     kanji: "キラ",   sound: "emote_sparkle" },
+  SKULL:     { key: "SKULL",     emoji: "💀", label: "Dead",        kanji: "死",     sound: "emote_pop" },
+  POINT:     { key: "POINT",     emoji: "👉", label: "Point (You!)", kanji: "お前",  sound: "emote_alert" },
+  SUS:       { key: "SUS",       emoji: "🤨", label: "Sus",         kanji: "怪",     sound: "emote_alert" },
+  GG:        { key: "GG",        emoji: "🎉", label: "GG",          kanji: "勝利",   sound: "emote_sparkle" },
+};
+
+// Sound cues: logical names the client maps to audio files (with silent fallback
+// when a file isn't present). Gameplay events also trigger cues via SOUND_EVENTS.
+export const SOUND_CUES = [
+  "emote_pop", "emote_laugh", "emote_cry", "emote_angry", "emote_gasp",
+  "emote_sparkle", "emote_alert",
+  "ui_click", "ui_back",
+  "task_start", "task_done", "refill", "repair",
+  "vote_cast", "ejected", "downed",
+  "attack_warning", "attack_hit", "plane_down", "attack_repelled",
+  "sabotage", "airlock_distress", "freeze", "victory", "defeat",
+];
+
+// Map server event types -> a sound cue the client should play when it sees one.
+export const SOUND_EVENTS = {
+  attack_warning: "attack_warning",
+  attack_incoming: "attack_hit",
+  attack_damage: "attack_hit",
+  plane_downed: "plane_down",
+  attack_ended: "attack_repelled",
+  sabotage_started: "sabotage",
+  airlock_distress: "airlock_distress",
+  frozen_in_void: "freeze",
+  eliminated_for_good: "ejected",
+  player_downed: "downed",
+  task_done: "task_done",
+};
+
 // ---- Continuous movement (real-time top-down) ----
 // Players have an x/y world position and glide toward a destination each tick.
 // World units are the same as the map geometry (a room is 120 units). At 180
@@ -130,10 +200,48 @@ export const SABOTAGE = {
   EMP_OUTAGE: { key: "EMP_OUTAGE", label: "EMP Power Outage",
     fuseSeconds: null, disablesRefill: false, freezesTasks: true,
     resolveRooms: ["Reactor", "Engineering", "Sensors"], resolversNeeded: 3 },
+  // NEW: call in an enemy attack wave. Unlike other sabotages this isn't a
+  // persistent debuff — it summons the turret-defense swarm and runs on its OWN
+  // cooldown (ATTACK.CALL_COOLDOWN_SEC), separate from the normal sabotage gate.
+  CALL_ATTACK: { key: "CALL_ATTACK", label: "Enemy Wave Inbound",
+    fuseSeconds: null, disablesRefill: false, callsAttack: true,
+    ownCooldown: true, resolveRooms: [], resolversNeeded: 0 },
+};
+
+// ---- Turret-defense attack waves ----
+// An attack is a discrete event: a swarm of enemy planes the crew must shoot down
+// from turrets. The attack ends when the whole swarm is destroyed. While it's
+// active, any plane still flying damages the hull on a cadence (shields soak some).
+// Attacks trigger on a random timer OR are CALLED IN by a dedicated sabotage that
+// runs on its own cooldown, separate from the normal sabotage cooldown.
+export const ATTACK = {
+  SWARM_SIZE: 20,            // total planes to shoot down to end an attack
+  DAMAGE_INTERVAL_SEC: 6,    // how often surviving planes hit the hull
+  DMG_PER_TICK_SHIELDED: 2,  // hull damage per cadence tick with shields up
+  DMG_PER_TICK_UNSHIELDED: 5,
+  SHOT_COOLDOWN_SEC: 0.8,    // min time between a turret's shots (server-enforced)
+  PLANES_PER_SHOT: 1,        // planes downed per shot
+  RANDOM_MIN_SEC: 70,        // earliest a random attack can start after the last
+  RANDOM_MAX_SEC: 140,       // latest
+  CALL_COOLDOWN_SEC: 90,     // dedicated cooldown for the CALL_ATTACK sabotage
+  MAX_DURATION_SEC: 75,      // if crew never clear it, it auto-ends (planes leave)
 };
 
 // While position is leaked, attacks come this much faster and this much harder.
 export const ATTRACT = { intervalFactor: 0.5, dmgFactor: 2 };
+
+// ---- Airlock / going outside ----
+// You exit the ship through the Airlock on a tether (limited to the airlock zone).
+// Outside, oxygen drains fast (it's also your propulsion) and a soldering task out
+// there burns it too. An impostor can lock the door from inside, trapping you; you
+// bang on the door to call for help (all living crew see it), and any crew member
+// can come unlock it. If your oxygen runs out while outside you FREEZE — permanent
+// elimination, no energy plane.
+export const AIRLOCK = {
+  OUTSIDE_OXYGEN_MULT: 3.0,    // oxygen drains this much faster outside
+  SOLDER_OXYGEN_COST: 12,      // extra oxygen the soldering task burns
+  SOLDER_MIN_SECONDS: 8,       // server-timed like other mini-games
+};
 
 // Global sabotage cooldown (shared across all sabotage types), per map override.
 export const GLOBAL_SABOTAGE_COOLDOWN_SEC = 30;
@@ -257,6 +365,10 @@ export const DRAFT = {
 // side: "crew" | "impostor" | "both"  (both = symmetric, affects everyone)
 // effect keys are read by the engine; magnitudes are intentionally small.
 export const PERKS = {
+  AGILE_THRUSTERS:  { key: "AGILE_THRUSTERS",  side: "crew", label: "Agile Thrusters",
+    desc: "Helm speed/slow changes happen 30% faster.", effect: { helmRampMult: 0.7 } },
+  HEAVY_FLYWHEEL:   { key: "HEAVY_FLYWHEEL",   side: "crew", label: "Heavy Flywheel",
+    desc: "Slower to maneuver (+40% ramp time) but the journey runs 10% longer per engine-second.", effect: { helmRampMult: 1.4 } },
   BIGGER_REACTOR:   { key: "BIGGER_REACTOR",   side: "crew", label: "Reinforced Reactor",
     desc: "+15% power pool capacity.", effect: { powerMaxMult: 1.15 } },
   LONGER_OXYGEN:    { key: "LONGER_OXYGEN",    side: "crew", label: "Deep-Cycle Tank",

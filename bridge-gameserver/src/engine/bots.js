@@ -64,8 +64,13 @@ function commanderManage(engine, p) {
   try { engine.setSystem(p.id, "oxygen", true); } catch {}
   try {
     const hullPct = engine.hull / (engine.map.hullMax || 150);
-    if (hullPct < 0.45) { engine.setSystem(p.id, "engines", false); engine.setSystem(p.id, "shields", true); }
-    else if (hullPct > 0.7) { engine.setSystem(p.id, "engines", true); }
+    const helm = engine.map.spawnRoom || "Helm";
+    const underThreat = engine.attack || engine.attackWarnUntil != null || hullPct < 0.45;
+    // Decide a target allocation: shields-heavy under threat / low hull, else cruise.
+    const want = underThreat ? 0.15 : (hullPct > 0.7 ? 0.85 : 0.5);
+    // Only the Helm can set it, so a bot that wants to change it heads there first.
+    if (p.room === helm) { engine.setAllocation(p.id, want); }
+    else if (underThreat) { stepToward(engine, p, [helm]); }
   } catch {}
 }
 function trySabotage(engine, imp) {

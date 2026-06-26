@@ -8,17 +8,25 @@ import { useComms, CommsRadial, CaptionStream } from "../components/Comms.jsx";
 import { SabotageMenu, SabotageAlerts } from "../components/Sabotage.jsx";
 import MiniGame from "../components/MiniGame.jsx";
 import { useControls, ControlHints, TipBubble } from "../components/Controls.jsx";
+import TrollScreen from "../components/TrollScreen.jsx";
+import { useEmotes, EmoteWheel } from "../components/Emotes.jsx";
+import { playSound } from "../util/sound.js";
+import { SOUND_EVENTS } from "../util/soundEvents.js";
+import { isDecoyCode, makeDecoyCode } from "../util/troll.js";
+import * as api from "../api/backend.js";
 
 // Play: connects to the game server, hosts the lobby, then renders the live
 // match driven by the server's per-player "state" stream. Classic mode focus —
 // no event/mode pickers here. Real Socket.IO throughout.
-export default function Play({ user, profile }) {
+export default function Play({ user, profile, onMatchActiveChange }) {
   const [conn, setConn] = useState(null);
   const [connected, setConnected] = useState(false);
   const [view, setView] = useState(null);     // redacted match view from server
   const [roomId, setRoomId] = useState(null);
   const [error, setError] = useState(null);
   const [joinCode, setJoinCode] = useState("");
+  const [troll, setTroll] = useState(false);
+  const [streamerMode, setStreamerMode] = useState(false);
   const [flash, setFlash] = useState(null);
   const [liveEvents, setLiveEvents] = useState([]);
   const prevPhase = useRef(null);
@@ -33,6 +41,9 @@ export default function Play({ user, profile }) {
         for (const e of events) {
           const key = `${e.type}:${e.id ?? ""}:${e.at ?? e.t ?? ""}`;
           if (seenEvents.current.has(key)) continue;
+          // play a sound cue for recognized gameplay events (silent if no file)
+          const cue = SOUND_EVENTS[e.type];
+          if (cue) { seenEvents.current.add(key); playSound(cue); }
           if (e.type === "player_eliminated") {
             seenEvents.current.add(key);
             setFlash({ text: "追放", sub: "PILOT EJECTED", color: "var(--hot)" });
@@ -45,6 +56,8 @@ export default function Play({ user, profile }) {
       onDisconnect: () => setConnected(false),
     });
     setConn(c);
+    // load the player's streamer-mode preference (affects lobby code display)
+    api.getSettings?.().then((s) => setStreamerMode(!!s?.privacy?.streamerMode)).catch(() => {});
     return () => c.disconnect();
   }, []);
 
@@ -70,7 +83,10 @@ export default function Play({ user, profile }) {
   };
   const joinByCode = async () => {
     if (!joinCode.trim()) return;
-    const res = await conn.joinRoom(joinCode.trim().toUpperCase(), user.name);
+    const code = joinCode.trim().toUpperCase();
+    // Streamer-mode decoy: a code with a "forbidden" char is a stream troll bait.
+    if (isDecoyCode(code)) { setTroll(true); return; }
+    const res = await conn.joinRoom(code, user.name);
     if (res.error) return setError(res.error);
     setRoomId(res.roomId);
   };
@@ -81,9 +97,15 @@ export default function Play({ user, profile }) {
   };
 
   const inMatch = view && (view.phase === "active" || view.phase === "draft" || view.phase === "ended");
+  // Tell the shell when we're in actual gameplay (active/draft) so it can hide the
+  // nav rail; the lobby and results keep it. Cleared on unmount.
+  const gameplay = view && (view.phase === "active" || view.phase === "draft");
+  useEffect(() => { onMatchActiveChange?.(!!gameplay); }, [gameplay, onMatchActiveChange]);
+  useEffect(() => () => onMatchActiveChange?.(false), []); // eslint-disable-line
 
   return (
     <div style={wrap}>
+      {troll && <TrollScreen onExit={() => { setTroll(false); setJoinCode(""); }} />}
       <SpeedLines hot={inMatch} />
       {flash && <KanjiFlash {...flash} onDone={() => setFlash(null)} />}
       {error && <div style={toast}>{error}</div>}
@@ -91,7 +113,7 @@ export default function Play({ user, profile }) {
       <div style={{ position: "relative", zIndex: 2, height: "100%" }}>
         {!roomId && <LobbyEntry connected={connected} joinCode={joinCode} setJoinCode={setJoinCode}
           onCreate={create} onJoinCode={joinByCode} onRandom={joinRandom} />}
-        {roomId && !inMatch && <LobbyRoom view={view} roomId={roomId} conn={conn} isHost={view?.you?.id === view?.hostId} />}
+        {roomId && !inMatch && <LobbyRoom view={view} roomId={roomId} conn={conn} isHost={view?.you?.id === view?.hostId} streamerMode={streamerMode} />}
         {roomId && view?.phase === "draft" && <Draft view={view} roomId={roomId} conn={conn} />}
         {roomId && view?.phase === "active" && <Match view={view} roomId={roomId} conn={conn} events={liveEvents} />}
         {roomId && view?.phase === "ended" && <Results view={view} roomId={roomId} conn={conn} profile={profile}
@@ -135,19 +157,65 @@ function LobbyEntry({ connected, joinCode, setJoinCode, onCreate, onJoinCode, on
 }
 
 /* ---------------- lobby room ---------------- */
-function LobbyRoom({ view, roomId, conn, isHost }) {
+function LobbyRoom({ view, roomId, conn, isHost, streamerMode }) {
   const players = view?.players || [];
   const min = view?.map?.minPlayers || 5;
   const enough = players.length >= min;
+  // Streamer mode: don't show the real code on screen. Show a believable DECOY
+  // (which routes anyone who types it to the troll), and let the host briefly
+  // reveal the real code with a button.
+  const [revealed, setRevealed] = useState(false);
+  const [decoy] = useState(() => makeDecoyCode());
+  useEffect(() => {
+    if (!revealed) return;
+    const t = setTimeout(() => setRevealed(false), 4000); // reveal for 4s
+    return () => clearTimeout(t);
+  }, [revealed]);
+  const showReal = !streamerMode || revealed;
+  const shownCode = showReal ? roomId : decoy;
+
   return (
     <div style={{ padding: "32px 40px", height: "100%", display: "grid", gridTemplateColumns: "1fr 340px", gap: 24 }}>
       <div>
         <div className="tag"><span>Briefing room</span></div>
         <div className="row" style={{ alignItems: "baseline", gap: 16, marginTop: 10 }}>
           <span className="display" style={{ fontSize: 30 }}>JOIN CODE</span>
-          <span className="display" style={{ fontSize: 64, color: "var(--hot)", letterSpacing: "0.1em" }}>{roomId}</span>
+          <span className="display" style={{ fontSize: 64, letterSpacing: "0.1em",
+            color: showReal ? "var(--hot)" : "var(--dim)", filter: showReal ? "none" : "blur(0px)" }}>{shownCode}</span>
+          {streamerMode && (
+            <button className="btn btn-ghost" style={{ fontSize: 12, padding: "6px 12px" }}
+              onClick={() => setRevealed((r) => !r)}>{revealed ? "Hide" : "Reveal"}</button>
+          )}
         </div>
-        <div className="dim" style={{ marginBottom: 20 }}>Share this code with your squad. {players.length}/{view?.map?.maxPlayers} aboard.</div>
+        {streamerMode
+          ? <div className="dim" style={{ marginBottom: 20 }}>🔒 Streamer mode on — the code shown is a <b>decoy</b>. Use Reveal to read the real one, or share it privately. {players.length}/{view?.map?.maxPlayers} aboard.</div>
+          : <div className="dim" style={{ marginBottom: 20 }}>Share this code with your squad. {players.length}/{view?.map?.maxPlayers} aboard.</div>}
+
+        {/* HOST CONTROLS pinned at the top so they don't shift as the roster grows
+            and shrinks while people join/leave. */}
+        {isHost && (
+          <div style={{ marginBottom: 20, padding: "14px 16px", border: "2px solid var(--line)", background: "rgba(13,11,20,0.5)" }}>
+            <button className="btn btn-hot" style={{ width: "100%", fontSize: 18, marginBottom: 12 }} disabled={!enough}
+              onClick={() => conn.startDraft(roomId)}>
+              {enough ? "Begin Perk Draft →" : `Need ${min - players.length} more pilot${min - players.length === 1 ? "" : "s"}`}
+            </button>
+            {players.length < (view?.map?.maxPlayers || 99) && (
+              <div>
+                <div className="impactf faint" style={{ fontSize: 11, letterSpacing: "0.12em", marginBottom: 8 }}>ADD A BOT</div>
+                <div className="row gap-s">
+                  {[["recruit", "Recruit", "易"], ["pilot", "Pilot", "中"], ["ace", "Ace", "難"]].map(([tier, label, kanji]) => (
+                    <button key={tier} className="btn" style={{ fontSize: 12, padding: "8px 14px", textTransform: "none" }}
+                      onClick={() => conn.addBot(roomId, tier)}>
+                      <span className="kanji" style={{ marginRight: 6, color: "var(--volt)" }}>{kanji}</span>{label}
+                    </button>
+                  ))}
+                </div>
+                <div className="faint" style={{ fontSize: 11, marginTop: 6 }}>Recruit = passive · Pilot = standard · Ace = aggressive. Bots can be crew or impostor.</div>
+              </div>
+            )}
+          </div>
+        )}
+        {!isHost && <div className="impactf dim" style={{ marginBottom: 20, letterSpacing: "0.1em" }}>WAITING FOR HOST TO LAUNCH…</div>}
 
         <div style={crewGrid}>
           {players.map((p) => (
@@ -163,29 +231,6 @@ function LobbyRoom({ view, roomId, conn, isHost }) {
             </div>
           ))}
         </div>
-
-        {isHost && players.length < (view?.map?.maxPlayers || 99) && (
-          <div style={{ marginTop: 16 }}>
-            <div className="impactf faint" style={{ fontSize: 11, letterSpacing: "0.12em", marginBottom: 8 }}>ADD A BOT</div>
-            <div className="row gap-s">
-              {[["recruit", "Recruit", "易"], ["pilot", "Pilot", "中"], ["ace", "Ace", "難"]].map(([tier, label, kanji]) => (
-                <button key={tier} className="btn" style={{ fontSize: 12, padding: "8px 14px", textTransform: "none" }}
-                  onClick={() => conn.addBot(roomId, tier)}>
-                  <span className="kanji" style={{ marginRight: 6, color: "var(--volt)" }}>{kanji}</span>{label}
-                </button>
-              ))}
-            </div>
-            <div className="faint" style={{ fontSize: 11, marginTop: 6 }}>Recruit = passive · Pilot = standard · Ace = aggressive. Bots can be crew or impostor.</div>
-          </div>
-        )}
-
-        {isHost && (
-          <button className="btn btn-hot" style={{ marginTop: 24, fontSize: 20 }} disabled={!enough}
-            onClick={() => conn.startDraft(roomId)}>
-            {enough ? "Begin Perk Draft →" : `Need ${min - players.length} more pilot${min - players.length === 1 ? "" : "s"}`}
-          </button>
-        )}
-        {!isHost && <div className="impactf dim" style={{ marginTop: 24, letterSpacing: "0.1em" }}>WAITING FOR HOST TO LAUNCH…</div>}
       </div>
 
       <div className="panel" style={{ padding: 18 }}>
@@ -232,14 +277,28 @@ function Match({ view, roomId, conn, events }) {
   const { pop, layer } = useImpact();
   const [voteOpen, setVoteOpen] = useState(false);
   const [sabOpen, setSabOpen] = useState(false);
+  const [escOpen, setEscOpen] = useState(false);
   const [activeTask, setActiveTask] = useState(null);
   const comms = useComms({ view, roomId, conn, events });
+  const emotes = useEmotes({ roomId, conn, events });
   const ctrl = useControls({
     view, roomId, conn,
     taskOpen: !!activeTask,
     onOpenTask: (t) => setActiveTask(t),
     onOpenSabotage: () => setSabOpen(true),
   });
+  // Esc toggles the in-game menu (Options + Surrender); V opens the eject-vote
+  // panel; Z opens the emote wheel. Ignored while typing.
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.target && /input|textarea/i.test(e.target.tagName)) return;
+      if (e.code === "Escape") { e.preventDefault(); setEscOpen((o) => !o); }
+      else if (e.code === "KeyV" && !activeTask) { e.preventDefault(); setVoteOpen((o) => !o); }
+      else if (e.code === "KeyZ" && !activeTask) { e.preventDefault(); emotes.setOpen((o) => !o); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [activeTask, emotes]);
   const you = view.you || {};
   const room = you.room;
   const map = view.map || {};
@@ -273,18 +332,52 @@ function Match({ view, roomId, conn, events }) {
           <div className="faint" style={{ fontSize: 11, marginTop: 4 }}>{Math.round(view.journey?.distance || 0)} / {view.journey?.total} to landing</div>
         </div>
         <div style={{ marginTop: 16 }}>
-          <div className="impactf faint" style={{ fontSize: 11, letterSpacing: "0.12em", marginBottom: 6 }}>SYSTEMS</div>
-          <div className="row gap-s" style={{ flexWrap: "wrap" }}>
+          <div className="impactf faint" style={{ fontSize: 11, letterSpacing: "0.12em", marginBottom: 6 }}>POWER BALANCE</div>
+          <div className="row gap-s" style={{ alignItems: "center" }}>
             <Sys on={view.systems?.oxygenOn} label="O₂" />
-            <Sys on={view.systems?.enginesOn} label="ENG" />
-            <Sys on={view.systems?.shieldsOn && !view.systems?.enginesOn} label="SHLD" />
+            <span className="faint" style={{ fontSize: 10 }}>SHLD</span>
+            <div style={{ flex: 1, height: 10, background: "var(--ink)", border: "1px solid var(--line)", position: "relative" }}>
+              <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${(1 - (view.systems?.allocation ?? 0.5)) * 100}%`, background: "var(--volt)", opacity: 0.8 }} />
+              <div style={{ position: "absolute", right: 0, top: 0, bottom: 0, width: `${(view.systems?.allocation ?? 0.5) * 100}%`, background: "var(--gold)", opacity: 0.8 }} />
+            </div>
+            <span className="faint" style={{ fontSize: 10 }}>ENG</span>
+          </div>
+          <div className="faint" style={{ fontSize: 10, marginTop: 4 }}>
+            {Math.round((1 - (view.systems?.allocation ?? 0.5)) * 100)}% shields · {Math.round((view.systems?.allocation ?? 0.5) * 100)}% engines{view.systems?.ramping ? " · adjusting…" : ""}
           </div>
         </div>
+
+        {/* TASK TRACKER: shows every assigned task + which room it's in, so players
+            know where to walk. The one in your current room is highlighted and is
+            startable from the bottom bar / E key. Impostors see fake tasks too (to
+            blend in), matching how the engine assigns them. */}
+        {(you.tasks || []).length > 0 && (
+          <div style={{ marginTop: 16 }}>
+            <div className="impactf faint" style={{ fontSize: 11, letterSpacing: "0.12em", marginBottom: 6 }}>
+              YOUR TASKS{isImpostor && <span style={{ color: "var(--violet)", marginLeft: 6 }}>(cover)</span>}
+            </div>
+            <div className="col" style={{ gap: 5 }}>
+              {(you.tasks || []).map((t) => {
+                const hereNow = t.room === room && !t.done;
+                return (
+                  <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11.5,
+                    padding: "4px 8px", border: `1px solid ${hereNow ? "var(--gold)" : "var(--line)"}`,
+                    background: hereNow ? "rgba(255,200,61,0.08)" : "transparent", opacity: t.done ? 0.45 : 1 }}>
+                    <span style={{ color: t.done ? "var(--volt)" : hereNow ? "var(--gold)" : "var(--dim)" }}>{t.done ? "✓" : "◆"}</span>
+                    <span style={{ flex: 1, textDecoration: t.done ? "line-through" : "none" }}>{t.name}</span>
+                    <span className="impactf" style={{ fontSize: 9, color: hereNow ? "var(--gold)" : "var(--dim)" }}>{t.room}</span>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="faint" style={{ fontSize: 10, marginTop: 5 }}>Walk to a task's room, then press E (or the button below).</div>
+          </div>
+        )}
       </div>
 
       {/* CENTER: the isometric playfield (click to move) with a floating HUD */}
       <div style={{ position: "relative", overflow: "hidden" }}>
-        <IsoStage view={view} onMoveTo={(x, y) => conn.setDestination(roomId, x, y)} />
+        <IsoStage view={view} onMoveTo={(x, y) => conn.setDestination(roomId, x, y)} emoteBubbles={emotes.bubbles} />
 
         {/* energy-plane wash + banner when you've crossed over */}
         {onEnergy && (
@@ -312,6 +405,7 @@ function Match({ view, roomId, conn, events }) {
           <div className="impactf faint" style={{ fontSize: 10, letterSpacing: "0.12em", pointerEvents: "none" }}>CLICK FLOOR TO MOVE · HOLD C FOR COMMS</div>
           <div className="row gap-s">
             <button className="btn" style={{ fontSize: 13, padding: "8px 14px", borderColor: "var(--volt)" }} onClick={() => comms.setOpen(true)}>声 COMMS</button>
+            <button className="btn" style={{ fontSize: 13, padding: "8px 14px", borderColor: "var(--gold)" }} onClick={() => emotes.setOpen(true)}>😊 EMOTE</button>
             <button className="btn btn-hot" style={{ fontSize: 13, padding: "8px 16px" }} onClick={() => setVoteOpen(true)}>
               投票 EJECT VOTE
               {view.you?.myVote && <span style={{ marginLeft: 8, fontSize: 10 }}>● VOTED</span>}
@@ -322,6 +416,7 @@ function Match({ view, roomId, conn, events }) {
         {/* incoming comms captions */}
         <CaptionStream captions={comms.captions} />
         {comms.open && <CommsRadial wheel={comms.wheel} fire={comms.fire} onClose={() => comms.setOpen(false)} />}
+        {emotes.open && <EmoteWheel onFire={emotes.fire} onClose={() => emotes.setOpen(false)} />}
 
         {/* active sabotage alerts (everyone) + impostor trigger menu */}
         <SabotageAlerts view={view} roomId={roomId} conn={conn} />
@@ -338,6 +433,128 @@ function Match({ view, roomId, conn, events }) {
         {ctrl.showHints && <ControlHints hints={ctrl.hints} />}
         <TipBubble view={view} enabled={ctrl.showTips} />
 
+        {/* ATTACK WARNING: 10s heads-up (like a sabotage alert) — rush to Helm + turrets. */}
+        {view.attackWarning && (
+          <div style={{ position: "absolute", top: 40, left: "50%", transform: "translateX(-50%)", zIndex: 75,
+            display: "flex", alignItems: "center", gap: 12, padding: "10px 20px",
+            background: "rgba(40,6,10,0.95)", border: "2px solid var(--hot)", animation: "pulse 1s infinite",
+            boxShadow: "0 0 30px rgba(255,45,77,0.5)" }}>
+            <span className="kanji" style={{ fontSize: 22, color: "var(--hot)" }}>警告</span>
+            <div>
+              <div className="display" style={{ fontSize: 18, lineHeight: 1, color: "var(--hot)" }}>ATTACK INBOUND · {view.attackWarning.secondsLeft}s</div>
+              <div className="impactf" style={{ fontSize: 11 }}>Get to the Helm (shields up!) and man the turrets</div>
+            </div>
+          </div>
+        )}
+
+        {/* HELM allocation slider: shown in the Helm room. Anyone here can shift the
+            balance between SHIELDS (slow, safe) and ENGINES (fast, exposed). The
+            ship ramps to the new setting gradually. */}
+        {room === view.helm?.room && !onEnergy && (
+          <div style={{ position: "absolute", bottom: 120, left: "50%", transform: "translateX(-50%)", zIndex: 70,
+            width: 340, maxWidth: "80%", padding: "12px 18px",
+            background: "rgba(13,11,20,0.94)", border: "2px solid var(--gold)" }}>
+            <div className="impactf" style={{ fontSize: 12, color: "var(--gold)", marginBottom: 8 }}>HELM · POWER ALLOCATION</div>
+            <div className="row" style={{ justifyContent: "space-between", fontSize: 10 }}>
+              <span className="faint" style={{ color: "var(--volt)" }}>◀ SHIELDS (slow/safe)</span>
+              <span className="faint" style={{ color: "var(--gold)" }}>ENGINES (fast) ▶</span>
+            </div>
+            <input type="range" min={0} max={100} value={Math.round((view.systems?.targetAllocation ?? 0.5) * 100)}
+              onChange={(e) => conn.setAllocation(roomId, Number(e.target.value) / 100)}
+              style={{ width: "100%", accentColor: "var(--gold)", margin: "6px 0" }} />
+            <div className="faint" style={{ fontSize: 10, textAlign: "center" }}>
+              now {Math.round((1 - (view.systems?.allocation ?? 0.5)) * 100)}% shields / {Math.round((view.systems?.allocation ?? 0.5) * 100)}% engines
+              {view.systems?.ramping ? " · ramping…" : ""}
+            </div>
+          </div>
+        )}
+
+        {/* in-game ESC menu: resume / surrender (with confirm). Replaces the nav
+            rail, which is hidden during a match. */}
+        {escOpen && <EscMenu onResume={() => setEscOpen(false)}
+          onSurrender={() => { conn.surrender(roomId); setEscOpen(false); }} />}
+
+        {/* ATTACK WAVE: banner + turret combat. Shows when enemy planes are inbound. */}
+        {view.attack && (
+          <div style={{ position: "absolute", top: 70, left: "50%", transform: "translateX(-50%)", zIndex: 70,
+            display: "flex", alignItems: "center", gap: 14, padding: "10px 18px",
+            background: "rgba(40,6,10,0.92)", border: "2px solid var(--hot)", boxShadow: "0 0 24px rgba(255,45,77,0.4)" }}>
+            <span className="kanji" style={{ fontSize: 20, color: "var(--hot)" }}>襲来</span>
+            <div>
+              <div className="display" style={{ fontSize: 20, lineHeight: 1, color: "var(--hot)" }}>ENEMY WAVE</div>
+              <div className="impactf" style={{ fontSize: 12 }}>{view.attack.planesLeft} / {view.attack.swarmSize} planes left · {view.attack.secondsLeft}s</div>
+            </div>
+            <div style={{ width: 120, height: 8, background: "var(--ink)", border: "1px solid var(--hot)" }}>
+              <div style={{ height: "100%", width: `${100 - (view.attack.planesLeft / view.attack.swarmSize) * 100}%`, background: "var(--hot)" }} />
+            </div>
+          </div>
+        )}
+
+        {/* TURRET controls: appear when you're standing in a turret room. Man it,
+            then fire at the swarm. One pilot per turret (server-enforced). */}
+        {(map.turretRooms || []).includes(room) && !onEnergy && (
+          <div style={{ position: "absolute", top: 150, left: "50%", transform: "translateX(-50%)", zIndex: 70,
+            display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "12px 18px",
+            background: "rgba(13,11,20,0.94)", border: "2px solid var(--volt)" }}>
+            <div className="impactf" style={{ fontSize: 12, color: "var(--volt)" }}>{room}{view.yourTurret === room ? " · MANNED" : ""}</div>
+            {view.yourTurret === room ? (
+              <>
+                <button className="btn btn-hot" style={{ fontSize: 22, padding: "12px 28px" }} disabled={!view.attack}
+                  onClick={() => conn.shootPlane(roomId)}>{view.attack ? "FIRE 🔫" : "No targets"}</button>
+                {view.attack && <div className="faint" style={{ fontSize: 11 }}>You've downed {view.planesDowned} this wave · spam to fire</div>}
+                <button className="btn btn-ghost" style={{ fontSize: 11, padding: "4px 10px" }} onClick={() => conn.leaveTurret(roomId)}>Leave turret</button>
+              </>
+            ) : (
+              <button className="btn" style={{ fontSize: 14, padding: "8px 18px", borderColor: "var(--volt)" }}
+                onClick={() => conn.enterTurret(roomId)}>Man this turret</button>
+            )}
+          </div>
+        )}
+
+        {/* AIRLOCK distress: all living crew see who's trapped outside banging for help. */}
+        {(view.airlock?.distress || []).length > 0 && !onEnergy && (
+          <div style={{ position: "absolute", top: 116, left: "50%", transform: "translateX(-50%)", zIndex: 72,
+            padding: "8px 16px", background: "rgba(40,6,10,0.92)", border: "2px solid var(--hot)" }}>
+            <span className="impactf" style={{ fontSize: 12, color: "var(--hot)" }}>
+              🆘 {view.airlock.distress.map((d) => d.name).join(", ")} trapped outside the airlock!
+            </span>
+          </div>
+        )}
+
+        {/* AIRLOCK controls: appear in the airlock room. Go outside / come in,
+            solder (outside), bang for help (trapped), impostor lock, crew unlock. */}
+        {room === view.airlock?.room && !onEnergy && (
+          <div style={{ position: "absolute", top: 150, left: "50%", transform: "translateX(-50%)", zIndex: 70,
+            display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "12px 18px",
+            background: "rgba(13,11,20,0.94)", border: `2px solid ${view.airlock.locked ? "var(--hot)" : "var(--volt)"}` }}>
+            <div className="impactf" style={{ fontSize: 12, color: view.airlock.locked ? "var(--hot)" : "var(--volt)" }}>
+              AIRLOCK {view.airlock.locked ? "· LOCKED 🔒" : ""}{view.airlock.youOutside ? " · YOU'RE OUTSIDE" : ""}
+            </div>
+            {!view.airlock.youOutside ? (
+              <div className="row gap-s" style={{ flexWrap: "wrap", justifyContent: "center" }}>
+                <button className="btn" style={{ fontSize: 13, padding: "8px 14px", borderColor: "var(--volt)" }}
+                  disabled={view.airlock.locked} onClick={() => conn.goOutside(roomId)}>Go outside ↗</button>
+                {view.airlock.locked && <button className="btn" style={{ fontSize: 13, padding: "8px 14px", borderColor: "var(--gold)" }}
+                  onClick={() => conn.unlockAirlock(roomId)}>Unlock door 🔓</button>}
+                {isImpostor && !view.airlock.locked && <button className="btn" style={{ fontSize: 13, padding: "8px 14px", borderColor: "var(--violet)" }}
+                  onClick={() => conn.lockAirlock(roomId)}>Lock door 🔒</button>}
+              </div>
+            ) : (
+              <div className="col" style={{ gap: 6, alignItems: "center" }}>
+                <div className="faint" style={{ fontSize: 11, color: "var(--hot)" }}>⚠ Oxygen burning fast out here</div>
+                <div className="row gap-s">
+                  <button className="btn" style={{ fontSize: 13, padding: "8px 14px", borderColor: "var(--gold)" }}
+                    onClick={() => conn.solderOutside(roomId)}>Solder hull 🔧</button>
+                  <button className="btn" style={{ fontSize: 13, padding: "8px 14px", borderColor: "var(--volt)" }}
+                    disabled={view.airlock.locked} onClick={() => conn.comeInside(roomId)}>Come in ↙</button>
+                </div>
+                {view.airlock.locked && <button className="btn btn-hot" style={{ fontSize: 14, padding: "8px 18px" }}
+                  onClick={() => conn.bangDoor(roomId)}>🆘 BANG FOR HELP</button>}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* bottom floating action bar */}
         <div style={hudBar}>
           {/* tasks here */}
@@ -351,16 +568,15 @@ function Match({ view, roomId, conn, events }) {
 
           {(map.refillRooms || []).includes(room) && <button className="btn" style={hudBtn} onClick={act(() => conn.refill(roomId))}>Refill O₂</button>}
           {(map.repairRooms || []).includes(room) && <button className="btn" style={hudBtn} onClick={act(() => conn.repair(roomId))}>Repair</button>}
-          {view.youAreCommander && <button className="btn" style={hudBtn} onClick={() => conn.setSystem(roomId, "engines", !view.systems?.enginesOn)}>Engines {view.systems?.enginesOn ? "ON" : "OFF"}</button>}
           {isImpostor && <button className="btn" style={{ ...hudBtn, borderColor: "var(--violet)" }} onClick={() => setSabOpen(true)}>妨害 Sabotage</button>}
 
-          {/* pilots in the same room: pull / vote */}
+          {/* pilots in the same room: shows who's here + impostor pull. Voting is
+              NOT here anymore — press V or use the top-right EJECT VOTE panel. */}
           {here.map((p) => (
             <span key={p.id} className="row gap-s" style={{ padding: "4px 8px", border: `1px solid ${p.idColor?.hex || "var(--line)"}`, alignItems: "center" }}>
               <span style={{ ...crewDot, width: 10, height: 10, background: p.idColor?.hex || "var(--dim)" }} />
               <span style={{ fontSize: 12, fontWeight: 700 }}>{p.name}</span>
               {isImpostor && p.plane === you.plane && <button className="btn" style={miniBtn} onClick={act(() => conn.detachCable(roomId, p.id))}>Pull</button>}
-              <button className="btn btn-ghost" style={miniBtn} onClick={() => conn.vote(roomId, p.id)}>Vote</button>
             </span>
           ))}
         </div>
@@ -472,6 +688,33 @@ function Results({ view, roomId, conn, profile, onLeave }) {
 }
 
 /* ---- small bits ---- */
+function EscMenu({ onResume, onSurrender }) {
+  const [confirmSurrender, setConfirmSurrender] = useState(false);
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 400, display: "grid", placeItems: "center", background: "rgba(5,4,9,0.7)", backdropFilter: "blur(3px)" }}
+      onClick={(e) => { if (e.target === e.currentTarget) onResume(); }}>
+      <div style={{ width: 320, maxWidth: "90vw", background: "rgba(13,11,20,0.98)", border: "2px solid var(--line)", padding: "22px 22px 18px",
+        clipPath: "polygon(0 0,calc(100% - 16px) 0,100% 16px,100% 100%,16px 100%,0 calc(100% - 16px))" }}>
+        <div className="kanji" style={{ fontSize: 18, color: "var(--volt)", marginBottom: 2 }}>一時停止</div>
+        <div className="display" style={{ fontSize: 30, lineHeight: 0.9, marginBottom: 18 }}>PAUSED</div>
+        <button className="btn" style={{ width: "100%", marginBottom: 10, padding: "12px", fontSize: 14, borderColor: "var(--volt)" }} onClick={onResume}>Resume (Esc)</button>
+        {!confirmSurrender ? (
+          <button className="btn btn-hot" style={{ width: "100%", padding: "12px", fontSize: 14 }} onClick={() => setConfirmSurrender(true)}>Surrender</button>
+        ) : (
+          <div style={{ border: "1px solid var(--hot)", padding: "12px", marginTop: 4 }}>
+            <div style={{ fontSize: 13, marginBottom: 10 }}>Surrender for real? You'll leave the match and your team plays on without you.</div>
+            <div className="row gap-s">
+              <button className="btn btn-ghost" style={{ flex: 1, fontSize: 13, padding: "8px" }} onClick={() => setConfirmSurrender(false)}>Cancel</button>
+              <button className="btn btn-hot" style={{ flex: 1, fontSize: 13, padding: "8px" }} onClick={onSurrender}>Yes, surrender</button>
+            </div>
+          </div>
+        )}
+        <div className="faint" style={{ fontSize: 10, marginTop: 14, textAlign: "center" }}>Esc to resume · V to vote · WASD to move</div>
+      </div>
+    </div>
+  );
+}
+
 function Gauge({ label, value, max, color, kanji }) {
   const pct = Math.max(0, Math.min(100, (value / max) * 100));
   return (

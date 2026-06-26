@@ -144,7 +144,7 @@ function computeHints(view, binds, taskOpen) {
 export function ControlHints({ hints }) {
   if (!hints || !hints.length) return null;
   return (
-    <div style={{ position: "absolute", left: 16, bottom: 16, display: "flex", flexDirection: "column", gap: 6, pointerEvents: "none", zIndex: 60 }}>
+    <div style={{ position: "absolute", left: 16, bottom: 96, display: "flex", flexDirection: "column", gap: 6, pointerEvents: "none", zIndex: 60 }}>
       <div className="impactf faint" style={{ fontSize: 9, letterSpacing: "0.16em", marginBottom: 2 }}>CONTROLS</div>
       {hints.map((h, i) => (
         <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, opacity: h.disabled ? 0.45 : 1 }}>
@@ -191,11 +191,12 @@ export function TipBubble({ view, enabled }) {
   }, [enabled, tips.length]);
   if (!enabled || dismissed || !view || view.phase !== "active") return null;
   return (
-    <div style={{ position: "absolute", bottom: 92, right: 16, zIndex: 55, maxWidth: 320, width: "44%",
-      display: "flex", alignItems: "center", gap: 10, padding: "8px 14px",
-      background: "rgba(13,11,20,0.9)", border: "1px solid var(--volt)", backdropFilter: "blur(3px)" }}>
-      <span className="kanji" style={{ fontSize: 16, color: "var(--volt)" }}>助</span>
-      <span style={{ fontSize: 13, flex: 1 }}>{tips[idx]}</span>
+    <div style={{ position: "absolute", bottom: 100, right: 16, zIndex: 55, maxWidth: 360, width: "min(360px, 50%)",
+      display: "flex", alignItems: "center", gap: 11, padding: "11px 15px",
+      background: "rgba(13,11,20,0.94)", border: "1px solid var(--volt)", backdropFilter: "blur(4px)",
+      boxShadow: "0 4px 16px rgba(0,0,0,0.5)" }}>
+      <span className="kanji" style={{ fontSize: 18, color: "var(--volt)", flexShrink: 0 }}>助</span>
+      <span style={{ fontSize: 14.5, lineHeight: 1.35, flex: 1 }}>{tips[idx]}</span>
       <button onClick={() => setDismissed(true)} style={{ background: "none", border: "none", color: "var(--dim)", cursor: "pointer", fontSize: 16, lineHeight: 1 }}>×</button>
     </div>
   );

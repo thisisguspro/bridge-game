@@ -95,6 +95,7 @@ export const memoryStore = {
       loadout: defaultLoadout(),// equipped per slot
       settings: structuredClone(DEFAULT_SETTINGS),
       wheels: defaultWheels(),  // emote + comms radial bindings
+      tosAccepted: false, tosAcceptedAt: null,
       createdAt: new Date().toISOString(),
     };
     users.set(id, user);
@@ -102,6 +103,10 @@ export const memoryStore = {
     // Grant the level-1 starter cosmetics so the kit is owned, not just defaulted.
     for (const cid of (LEVEL_UNLOCKS[1]?.grants || [])) user.cosmetics.add(cid);
     return user;
+  },
+  async setTosAccepted(id, val) {
+    const u = users.get(id); if (!u) return;
+    u.tosAccepted = !!val; u.tosAcceptedAt = new Date().toISOString();
   },
   async getUser(id) { return users.get(id) || null; },
 

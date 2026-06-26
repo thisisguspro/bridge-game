@@ -2,11 +2,11 @@
 // bottom. The level chip is a small recurring progression cue.
 export default function NavRail({ screen, setScreen, user, profile, onSignOut }) {
   const items = [
+    { id: "play", label: "Play", kanji: "出撃" },
     { id: "hangar", label: "Hangar", kanji: "格納" },
     { id: "locker", label: "Locker", kanji: "装備" },
     { id: "shop", label: "Shop", kanji: "商店" },
     { id: "wheels", label: "Wheels", kanji: "輪" },
-    { id: "play", label: "Play", kanji: "出撃" },
     { id: "settings", label: "Options", kanji: "設定" },
   ];
   return (

@@ -261,6 +261,17 @@ io.on("connection", (socket) => {
   socket.on("set_system", ({ roomId, system, on }) => act(roomId, (r, pid) => r.engine.setSystem(pid, system, on)));
   socket.on("repair", ({ roomId }) => act(roomId, (r, pid) => r.engine.repairHull(pid)));
   socket.on("start_task", ({ roomId, taskId }) => act(roomId, (r, pid) => r.engine.startTask(pid, taskId)));
+  socket.on("surrender", ({ roomId } = {}) => act(roomId, (r, pid) => r.engine.surrender(pid)));
+  socket.on("enter_turret", ({ roomId } = {}) => act(roomId, (r, pid) => r.engine.enterTurret(pid)));
+  socket.on("leave_turret", ({ roomId } = {}) => act(roomId, (r, pid) => { r.engine.leaveTurret(pid); return {}; }));
+  socket.on("shoot_plane", ({ roomId } = {}) => act(roomId, (r, pid) => r.engine.shootPlane(pid)));
+  socket.on("go_outside", ({ roomId } = {}) => act(roomId, (r, pid) => r.engine.goOutside(pid)));
+  socket.on("come_inside", ({ roomId } = {}) => act(roomId, (r, pid) => r.engine.comeInside(pid)));
+  socket.on("lock_airlock", ({ roomId } = {}) => act(roomId, (r, pid) => { r.engine.lockAirlock(pid); return {}; }));
+  socket.on("unlock_airlock", ({ roomId } = {}) => act(roomId, (r, pid) => { r.engine.unlockAirlock(pid); return {}; }));
+  socket.on("bang_door", ({ roomId } = {}) => act(roomId, (r, pid) => { r.engine.bangOnDoor(pid); return {}; }));
+  socket.on("solder_outside", ({ roomId } = {}) => act(roomId, (r, pid) => r.engine.solderOutside(pid)));
+  socket.on("set_allocation", ({ roomId, value } = {}) => act(roomId, (r, pid) => r.engine.setAllocation(pid, value)));
   socket.on("complete_task", ({ roomId, taskId }) => act(roomId, (r, pid) => r.engine.completeTask(pid, taskId)));
   socket.on("detach_cable", ({ roomId, targetId }) => {
     act(roomId, (r, pid) => r.engine.detachCable(pid, targetId));
@@ -275,6 +286,7 @@ io.on("connection", (socket) => {
   socket.on("vote", ({ roomId, targetId }) => act(roomId, (r, pid) => r.engine.castVote(pid, targetId ?? null)));
   socket.on("voice_command", ({ roomId, command, targetId }) => act(roomId, (r, pid) => r.engine.sendVoiceCommand(pid, command, targetId ?? null)));
   socket.on("speech", ({ roomId, text }) => act(roomId, (r, pid) => r.engine.sendSpeech(pid, text ?? null)));
+  socket.on("emote", ({ roomId, emote }) => act(roomId, (r, pid) => r.engine.sendEmote(pid, emote)));
 
   socket.on("disconnect", () => {
     for (const room of rooms.rooms.values()) {

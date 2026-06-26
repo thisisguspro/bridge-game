@@ -24,10 +24,21 @@ async function req(path, { method = "GET", body, auth = true } = {}) {
 // --- auth ---
 // Dev sign-in: the backend's OAuth is stubbed, so we post a name (+ optional
 // email so the superadmin bootstrap works) and receive a real session token.
-export async function signIn({ name, email }) {
-  const data = await req("/auth/google", { method: "POST", auth: false, body: { name, email, mockGoogleId: "dev-" + (email || name) } });
+export async function signIn({ name, email, acceptedTos } = {}) {
+  // We need to read the 428 tos_required case rather than let req() throw, so we
+  // call fetch directly here.
+  const res = await fetch(BACKEND_URL + "/auth/google", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, email, acceptedTos, mockGoogleId: "dev-" + (email || name) }),
+  });
+  const text = await res.text();
+  let data; try { data = text ? JSON.parse(text) : {}; } catch { data = {}; }
+  if (res.status === 428 || data.error === "tos_required") {
+    const e = new Error("tos_required"); e.tosRequired = true; throw e;
+  }
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
   if (data.token) setToken(data.token);
-  return data; // { token, user }
+  return data; // { token, user, nameChanged, newAccount }
 }
 export async function me() { return req("/auth/me"); }
 

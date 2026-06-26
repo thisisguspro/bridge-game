@@ -41,13 +41,18 @@ export const DEFAULT_SETTINGS = {
   },
   accessibility: {
     colorblindShapes: true,    // the ID shape above heads (on by default)
+    colorblindLabels: false,   // also show the color NAME next to players
     highContrast: false,
     captionsEnabled: true,     // who-said-what text for anything you'd hear
     captionSize: "medium",     // small | medium | large
     reducedMotion: false,
+    ghostReadability: true,    // make downed/ghost players & their UI clearer (dashed outline, "GHOST" tag)
     holdToConfirm: false,      // require a hold instead of a tap for risky actions
     showTips: true,            // pop-up gameplay tips (helpful for new/returning players)
     showControlHints: true,    // on-screen contextual control hints (lower corner)
+  },
+  privacy: {
+    streamerMode: false,       // hide the join code (reveal briefly on demand); show a troll code instead
   },
   controls: {
     // Movement + action key bindings. Free-form: any string key code.
@@ -102,13 +107,19 @@ export function sanitizeSettings(incoming = {}) {
 
   const ac = incoming.accessibility || {};
   out.accessibility.colorblindShapes = bool(ac.colorblindShapes, out.accessibility.colorblindShapes);
+  out.accessibility.colorblindLabels = bool(ac.colorblindLabels, out.accessibility.colorblindLabels);
   out.accessibility.highContrast = bool(ac.highContrast, out.accessibility.highContrast);
   out.accessibility.captionsEnabled = bool(ac.captionsEnabled, out.accessibility.captionsEnabled);
   out.accessibility.captionSize = oneOf(ac.captionSize, ["small", "medium", "large"], out.accessibility.captionSize);
   out.accessibility.reducedMotion = bool(ac.reducedMotion, out.accessibility.reducedMotion);
+  out.accessibility.ghostReadability = bool(ac.ghostReadability, out.accessibility.ghostReadability);
   out.accessibility.holdToConfirm = bool(ac.holdToConfirm, out.accessibility.holdToConfirm);
   out.accessibility.showTips = bool(ac.showTips, out.accessibility.showTips);
   out.accessibility.showControlHints = bool(ac.showControlHints, out.accessibility.showControlHints);
+
+  out.privacy = out.privacy || { streamerMode: false };
+  const pv = incoming.privacy || {};
+  out.privacy.streamerMode = bool(pv.streamerMode, out.privacy.streamerMode);
 
   // Controls: free-form string keycodes. Keep only string values for known actions.
   const c = incoming.controls || {};

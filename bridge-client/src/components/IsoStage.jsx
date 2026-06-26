@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import IsoPilot from "./IsoPilot.jsx";
+import { EmoteBubble } from "./Emotes.jsx";
 
 // Isometric playfield. Projects world (x,y) into angled 2.5D screen space, draws
 // the station floor (rooms as diamonds, corridors between them) on a canvas, and
@@ -17,11 +18,43 @@ function toWorld(sx, sy) {
   return { wx: (a + b) / 2, wy: (b - a) / 2 };
 }
 
-export default function IsoStage({ view, onMoveTo }) {
+// ---- Room art image cache ----
+// Each room TYPE may have a top-down art PNG at /assets/rooms/<slug>.png. We load
+// it lazily, once, and remember success/failure so the renderer can fall back to
+// the drawn diamond when art is missing (the game stays fully playable with zero
+// art files present — art is purely additive). Drop files into the client's
+// public/assets/rooms/ folder (see the art template guide) and they appear here.
+const roomImgCache = {}; // slug -> { img, status: 'loading'|'ok'|'fail' }
+function roomSlug(name) {
+  return name.replace(/\s+\d+$/, "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+}
+function getRoomImage(name) {
+  const slug = roomSlug(name);
+  let entry = roomImgCache[slug];
+  if (!entry) {
+    entry = roomImgCache[slug] = { img: new Image(), status: "loading" };
+    entry.img.onload = () => { entry.status = "ok"; };
+    entry.img.onerror = () => { entry.status = "fail"; };
+    entry.img.src = `/assets/rooms/${slug}.png`;
+  }
+  return entry;
+}
+
+export default function IsoStage({ view, onMoveTo, emoteBubbles = {} }) {
   const geo = view?.map?.geometry;
   const canvasRef = useRef(null);
   const wrapRef = useRef(null);
   const [dims, setDims] = useState({ w: 800, h: 600 });
+  // accessibility prefs that affect player rendering (symbols + labels)
+  const [a11y, setA11y] = useState({ colorblindShapes: true, colorblindLabels: false, ghostReadability: true });
+  useEffect(() => {
+    import("../api/backend.js").then((api) => api.getSettings?.()
+      .then((s) => s?.accessibility && setA11y({
+        colorblindShapes: s.accessibility.colorblindShapes !== false,
+        colorblindLabels: !!s.accessibility.colorblindLabels,
+        ghostReadability: s.accessibility.ghostReadability !== false,
+      })).catch(() => {})).catch(() => {});
+  }, []);
 
   // Smooth interpolation: keep a local render-position per player that eases
   // toward the authoritative server position each animation frame.
@@ -102,15 +135,44 @@ export default function IsoStage({ view, onMoveTo }) {
         toScreen(r.x + r.w, r.y + r.h), toScreen(r.x, r.y + r.h),
       ].map((p) => ({ x: p.sx + ox, y: p.sy + oy }));
       const here = name === myRoom;
+      // clip to the room diamond
+      ctx.save();
       ctx.beginPath(); ctx.moveTo(c[0].x, c[0].y);
       for (let i = 1; i < 4; i++) ctx.lineTo(c[i].x, c[i].y); ctx.closePath();
-      ctx.fillStyle = here ? "#241d33" : "#1a1626"; ctx.fill();
-      ctx.strokeStyle = here ? "rgba(255,45,77,0.7)" : "rgba(90,81,112,0.5)";
-      ctx.lineWidth = here ? 2.5 : 1.5; ctx.stroke();
+
+      const art = getRoomImage(name);
+      if (art.status === "ok" && art.img.width) {
+        // Map the square art onto the iso parallelogram via an affine transform.
+        // Top-left=c[0], top-right=c[1], bottom-left=c[3]. Image is art.img.width sq.
+        ctx.clip();
+        const iw = art.img.width, ih = art.img.height;
+        const ax = (c[1].x - c[0].x) / iw, ay = (c[1].y - c[0].y) / iw; // image x-axis
+        const bx = (c[3].x - c[0].x) / ih, by = (c[3].y - c[0].y) / ih; // image y-axis
+        ctx.setTransform(window.devicePixelRatio || 1, 0, 0, window.devicePixelRatio || 1, 0, 0);
+        ctx.transform(ax, ay, bx, by, c[0].x, c[0].y);
+        ctx.drawImage(art.img, 0, 0);
+        ctx.setTransform(window.devicePixelRatio || 1, 0, 0, window.devicePixelRatio || 1, 0, 0);
+        ctx.restore();
+        // highlight ring for your current room
+        if (here) {
+          ctx.beginPath(); ctx.moveTo(c[0].x, c[0].y);
+          for (let i = 1; i < 4; i++) ctx.lineTo(c[i].x, c[i].y); ctx.closePath();
+          ctx.strokeStyle = "rgba(255,45,77,0.8)"; ctx.lineWidth = 2.5; ctx.stroke();
+        }
+      } else {
+        // fallback: the drawn diamond (current look) — keeps the game playable
+        // with no art present.
+        ctx.fillStyle = here ? "#241d33" : "#1a1626"; ctx.fill();
+        ctx.strokeStyle = here ? "rgba(255,45,77,0.7)" : "rgba(90,81,112,0.5)";
+        ctx.lineWidth = here ? 2.5 : 1.5; ctx.stroke();
+        ctx.restore();
+      }
       // room label
       const ctr = toScreen(r.x + r.w / 2, r.y + r.h / 2);
-      ctx.fillStyle = here ? "#f7f3e9" : "#6f6688";
+      ctx.fillStyle = art.status === "ok" ? "#f7f3e9" : (here ? "#f7f3e9" : "#6f6688");
       ctx.font = "600 11px Rajdhani, sans-serif"; ctx.textAlign = "center";
+      // a subtle shadow so labels read over art
+      if (art.status === "ok") { ctx.fillStyle = "rgba(0,0,0,0.6)"; ctx.fillText(name, ctr.sx + ox + 1, ctr.sy + oy - 3); ctx.fillStyle = "#f7f3e9"; }
       ctx.fillText(name, ctr.sx + ox, ctr.sy + oy - 4);
       // station glyphs
       let tag = null, col = null;
@@ -118,6 +180,22 @@ export default function IsoStage({ view, onMoveTo }) {
       else if (repair.has(name)) { tag = "⚒"; col = "#ffc83d"; }
       else if (turret.has(name)) { tag = "▣"; col = "#ff2d4d"; }
       if (tag) { ctx.fillStyle = col; ctx.font = "700 12px Rajdhani"; ctx.fillText(tag, ctr.sx + ox, ctr.sy + oy + 12); }
+    }
+
+    // furniture blockers: draw each collision rect as a filled iso quad so the
+    // obstacles players bump into are visible (matches the server's collision data).
+    const blockers = view.map.blockers || {};
+    for (const rects of Object.values(blockers)) {
+      for (const b of rects) {
+        const q = [
+          toScreen(b.x, b.y), toScreen(b.x + b.w, b.y),
+          toScreen(b.x + b.w, b.y + b.h), toScreen(b.x, b.y + b.h),
+        ].map((p) => ({ x: p.sx + ox, y: p.sy + oy }));
+        ctx.beginPath(); ctx.moveTo(q[0].x, q[0].y);
+        for (let i = 1; i < 4; i++) ctx.lineTo(q[i].x, q[i].y); ctx.closePath();
+        ctx.fillStyle = "rgba(60,54,82,0.85)"; ctx.fill();
+        ctx.strokeStyle = "rgba(120,110,150,0.6)"; ctx.lineWidth = 1; ctx.stroke();
+      }
     }
   }
 
@@ -154,7 +232,16 @@ export default function IsoStage({ view, onMoveTo }) {
           const isYou = p.id === view.you?.id;
           return (
             <div key={p.id} style={{ position: "absolute", left: s.sx + ox, top: s.sy + oy }}>
-              <IsoPilot player={p} facing={r.facing || "SE"} moving={r.moving} isYou={isYou} />
+              <IsoPilot player={p} facing={r.facing || "SE"} moving={r.moving} isYou={isYou}
+                showSymbol={a11y.colorblindShapes} showLabel={a11y.colorblindLabels} />
+              {emoteBubbles[p.id] && <EmoteBubble emoji={emoteBubbles[p.id].emoji} />}
+              {a11y.ghostReadability && (p.plane === "energy" || p.plane === "eliminated") && (
+                <div style={{ position: "absolute", left: "50%", top: -20, transform: "translate(-50%,-100%)",
+                  fontFamily: "var(--impact)", fontSize: 9, padding: "0 5px", background: "rgba(70,230,255,0.18)",
+                  color: "#7fe8ff", border: "1px dashed #46e6ff", whiteSpace: "nowrap" }}>
+                  {p.plane === "eliminated" ? "FROZEN" : "GHOST"}
+                </div>
+              )}
               <div style={{ position: "absolute", left: "50%", top: -2, transform: "translate(-50%,-100%)", whiteSpace: "nowrap",
                 fontFamily: "var(--impact)", fontSize: 10, padding: "1px 6px", background: "rgba(13,11,20,0.8)",
                 color: isYou ? "var(--hot)" : "var(--paper)", border: `1px solid ${p.idColor?.hex || "var(--line)"}` }}>
@@ -163,7 +250,7 @@ export default function IsoStage({ view, onMoveTo }) {
             </div>
           );
         })}
-      <style>{`@keyframes pilotbob{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}}`}</style>
+      <style>{`@keyframes pilotbob{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}} @keyframes emotePop{0%{transform:translateX(-50%) scale(0.3);opacity:0}60%{transform:translateX(-50%) scale(1.15)}100%{transform:translateX(-50%) scale(1);opacity:1}}`}</style>
     </div>
   );
 }
