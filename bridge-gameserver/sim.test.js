@@ -363,6 +363,33 @@ section("Emotes: broadcast to same-room players with a sound cue");
   assert(threw, "unknown emote is rejected");
 }
 
+section("Living don't see ghosts, but see a corpse where they died");
+{
+  const { g, crew, impostors } = startMatch(6, "nebula_drift", 88);
+  const victim = crew[0], witness = crew[1];
+  // put victim + witness in same room, then down the victim
+  place(g, victim, "Bridge"); place(g, witness, "Bridge");
+  const vRoom = g.players.get(victim).room;
+  g._down(victim, "test");
+  const wv = g.viewFor(witness);
+  const ghostVisible = (wv.players || []).some((p) => p.id === victim);
+  assert(!ghostVisible, "living witness does NOT see the downed player as a ghost");
+  const corpseHere = (wv.corpses || []).some((c) => c.playerId === victim || c.name === g.players.get(victim).name);
+  // corpse carries name; match by name since id is corpse_*
+  const corpseByName = (wv.corpses || []).some((c) => c.name === g.players.get(victim).name);
+  assert(corpseByName, "living witness sees a corpse where the victim died");
+  // a witness in a DIFFERENT room should not see the corpse
+  const other = crew[2]; const otherRoom = g.players.get(other).room;
+  if (otherRoom !== g.players.get(victim).room) {
+    const ov = g.viewFor(other);
+    const sees = (ov.corpses || []).some((c) => c.name === g.players.get(victim).name);
+    assert(!sees, "a player in another room doesn't see the corpse");
+  }
+  // the ghost themselves still sees everyone (full sight)
+  const gv = g.viewFor(victim);
+  assert((gv.players || []).length >= 5, "ghost retains full sight of all players");
+}
+
 section("Player reports are recorded and drainable for moderation");
 {
   const { g, crew } = startMatch(6, "nebula_drift", 77);

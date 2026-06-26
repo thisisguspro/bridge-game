@@ -136,6 +136,7 @@ export const SOUND_EVENTS = {
 export const MOVE = {
   SPEED_PER_SEC: 400,            // base glide speed (scaled for the larger map)
   ARRIVE_EPS: 6,                 // within this many units = arrived
+  BOT_SPEED_MULT: 0.62,          // bots move at ~human felt-speed (they path far targets; humans nudge short)
 };
 
 // ---- Hull & combat ----
@@ -290,6 +291,7 @@ export const MINIGAMES = {
   alignment:     { key: "alignment",     label: "Align the dish",        minSeconds: 12, energy: false },
   hold_timing:   { key: "hold_timing",   label: "Hold to calibrate",     minSeconds: 13, energy: false },
   water_sort:    { key: "water_sort",    label: "Sort the coolant",      minSeconds: 12, energy: false },
+  pattern_recall:{ key: "pattern_recall",label: "Recall the pattern",     minSeconds: 10, energy: false },
   // energy-plane variants — same skills, ghostly theme, a touch quicker so being
   // downed still feels productive rather than punishing.
   flux_route:    { key: "flux_route",    label: "Route the flux",        minSeconds: 10, energy: true },
@@ -306,7 +308,7 @@ export const TASK = {
   GHOST_POWER_MULT: 0.5,
 };
 // Physical and energy mini-game pools to assign from.
-const PHYSICAL_GAMES = ["wire_connect", "code_sequence", "alignment", "water_sort", "hold_timing"];
+const PHYSICAL_GAMES = ["wire_connect", "code_sequence", "alignment", "water_sort", "pattern_recall", "hold_timing"];
 const ENERGY_GAMES = ["flux_route", "phase_match"];
 export { PHYSICAL_GAMES, ENERGY_GAMES };
 

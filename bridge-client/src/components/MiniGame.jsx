@@ -45,6 +45,7 @@ const GAME_LABELS = {
   alignment: "Slide both rings into the green zone.",
   hold_timing: "Hold the button while the needle is in the band.",
   water_sort: "Pour to sort each color into its own tube.",
+  pattern_recall: "Memorize the lit cells, then tap them.",
   flux_route: "Route the flux through every node.",
   phase_match: "Match the phase to the target.",
 };
@@ -238,8 +239,64 @@ function PhaseMatch({ accent, onComplete }) {
 const GAMES = {
   wire_connect: WireConnect, code_sequence: CodeSequence, alignment: Alignment,
   hold_timing: HoldTiming, flux_route: FluxRoute, phase_match: PhaseMatch,
-  water_sort: WaterSort,
+  water_sort: WaterSort, pattern_recall: PatternRecall,
 };
+
+/* ---------------- pattern recall (memory) ---------------- */
+// A 4x4 grid lights up a handful of cells for a moment; memorize them, then tap
+// the cells that lit up. Get them all (and no wrong taps) to solve. Forgiving:
+// a wrong tap just resets the round and re-shows the pattern.
+function PatternRecall({ accent, onComplete, solved }) {
+  const SIZE = 16, LIT = 5;
+  const pick = () => { const s = new Set(); while (s.size < LIT) s.add(Math.floor(Math.random() * SIZE)); return s; };
+  const [target, setTarget] = useState(pick);
+  const [showing, setShowing] = useState(true);
+  const [tapped, setTapped] = useState(new Set());
+  const [wrong, setWrong] = useState(null);
+
+  useEffect(() => {
+    setShowing(true);
+    const t = setTimeout(() => setShowing(false), 1600); // memorize window
+    return () => clearTimeout(t);
+  }, [target]);
+
+  useEffect(() => {
+    if (!solved && tapped.size === target.size && [...tapped].every((i) => target.has(i))) onComplete();
+  }, [tapped]); // eslint-disable-line
+
+  const tap = (i) => {
+    if (showing || solved) return;
+    if (!target.has(i)) {
+      // wrong: flash, reset this round, re-show a (new) pattern
+      setWrong(i);
+      setTimeout(() => { setWrong(null); setTapped(new Set()); setTarget(pick()); }, 500);
+      return;
+    }
+    setTapped((s) => new Set(s).add(i));
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+      <div className="impactf" style={{ fontSize: 11, color: accent, minHeight: 14 }}>
+        {showing ? "MEMORIZE…" : "TAP THE CELLS THAT LIT UP"}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 48px)", gap: 6 }}>
+        {Array.from({ length: SIZE }).map((_, i) => {
+          const lit = showing && target.has(i);
+          const got = tapped.has(i);
+          const bad = wrong === i;
+          return (
+            <button key={i} onClick={() => tap(i)} disabled={showing}
+              style={{ width: 48, height: 48, borderRadius: 8, cursor: showing ? "default" : "pointer",
+                background: bad ? "var(--hot)" : lit ? accent : got ? "rgba(124,255,107,0.5)" : "rgba(20,18,30,0.9)",
+                border: `2px solid ${lit || got ? accent : "var(--line)"}`, transition: "background 0.12s" }} />
+          );
+        })}
+      </div>
+      <div className="faint" style={{ fontSize: 10 }}>{tapped.size}/{target.size} found</div>
+    </div>
+  );
+}
 
 /* ---------------- water sort (pour to separate colors) ---------------- */
 // Classic tube-sort: tap a tube to pick it up, tap another to pour. You can pour

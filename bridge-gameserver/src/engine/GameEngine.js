@@ -544,10 +544,14 @@ export class GameEngine {
   // Advance every player toward their destination by dt seconds. Called by tick.
   _integrateMovement(dt) {
     if (!this.map.geometry) return;
-    const speed = MOVE.SPEED_PER_SEC * (this.config.moveSpeedMult ?? 1) * dt;
+    const baseSpeed = MOVE.SPEED_PER_SEC * (this.config.moveSpeedMult ?? 1) * dt;
     for (const p of this.players.values()) {
       if (p.plane === PLANE.ELIMINATED) continue;
       if (p.tx == null || p.x == null) continue;
+      // Bots move at human walking speed. Humans steer with frequent short nudges
+      // (which naturally caps their pace); bots target far room-centers and would
+      // otherwise glide faster, so we damp them slightly to match the felt speed.
+      const speed = p.isBot ? baseSpeed * MOVE.BOT_SPEED_MULT : baseSpeed;
       const dx = p.tx - p.x, dy = p.ty - p.y;
       const dist = Math.hypot(dx, dy);
       let nx, ny;
@@ -820,6 +824,15 @@ export class GameEngine {
     }
     p.plane = PLANE.ENERGY;
     p.oxygen = 0;
+    // Leave a body on the floor where they died — living crew can stumble on it
+    // (the ghost itself becomes invisible to the living). Bodies persist for the
+    // rest of the match.
+    this.corpses = this.corpses || [];
+    this.corpses.push({
+      id: "corpse_" + playerId, playerId, name: p.name,
+      room: p.room, x: p.x ?? null, y: p.y ?? null,
+      idColor: p.idColor, at: this.now,
+    });
     // Fresh energy-themed tasks that feed the SAME shared bar.
     p.tasks = this._assignTasks(ENERGY_TASKS);
     this._log("downed", { id: playerId, cause, private: true }); // who/why is privileged info
@@ -1312,7 +1325,12 @@ export class GameEngine {
     // already restricted); it keeps its other effects.
     const fullSight = iAmDowned || ended;
 
-    const players = [...this.players.values()].map((p) => {
+    const players = [...this.players.values()].filter((p) => {
+      // Living players do NOT see ghosts (energy plane) at all — only a corpse is
+      // left behind (see corpses below). Ghosts and post-game see everyone.
+      if (!fullSight && p.plane === PLANE.ENERGY && p.id !== me.id) return false;
+      return true;
+    }).map((p) => {
       const sameRoom = p.room === me.room;
       const base = { id: p.id, name: p.name, plane: p.plane, connected: p.connected, isBot: !!p.isBot,
         loadout: p.loadout, idColor: p.idColor };
@@ -1327,6 +1345,11 @@ export class GameEngine {
       else base.role = "unknown";
       return base;
     });
+
+    // Corpses visible to the viewer: living players see bodies in their own room;
+    // ghosts/post-game see all bodies. (The ghost themselves is hidden above.)
+    const corpses = (this.corpses || []).filter((c) => fullSight || c.room === me.room)
+      .map((c) => ({ id: c.id, name: c.name, room: c.room, x: c.x, y: c.y, idColor: c.idColor }));
 
     // Comms scope: physical players hear only same-room players; downed players
     // share one map-wide energy channel. We expose the channel membership so the
@@ -1413,6 +1436,7 @@ export class GameEngine {
       commanderId: this.commanderId,
       youAreCommander: playerId === this.commanderId,
       players,
+      corpses,
       taskProgress: this.taskProgress(),
       you: {
         id: me.id, role: me.role, plane: me.plane, room: me.room,

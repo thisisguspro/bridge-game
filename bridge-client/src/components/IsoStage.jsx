@@ -10,7 +10,7 @@ import { EmoteBubble } from "./Emotes.jsx";
 // motion looks smooth.
 //
 // Iso projection: screen = ( (x - y) * COS, (x + y) * SIN ) — classic 2:1 iso.
-const ISO = { cos: 0.86, sin: 0.5, scale: 0.95 };
+const ISO = { cos: 0.86, sin: 0.5, scale: 1.7 };
 function toScreen(wx, wy) { return { sx: (wx - wy) * ISO.cos * ISO.scale, sy: (wx + wy) * ISO.sin * ISO.scale }; }
 
 // ---- Room art image cache ----
@@ -239,6 +239,26 @@ export default function IsoStage({ view, emoteBubbles = {} }) {
   return (
     <div ref={wrapRef} style={{ position: "relative", width: "100%", height: "100%", overflow: "hidden", cursor: "default", background: "radial-gradient(120% 100% at 50% 30%, #15111f 0%, #0b0911 70%)" }}>
       <canvas ref={canvasRef} style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }} />
+      {/* corpses: a body left on the floor where a player died. Living players see
+          these (the ghost itself is hidden); a discovery is a big deal. */}
+      {(view.corpses || []).filter((c) => c.x != null).map((c) => {
+        const s = toScreen(c.x, c.y);
+        return (
+          <div key={c.id} style={{ position: "absolute", left: s.sx + ox, top: s.sy + oy, transform: "translate(-50%,-60%)", pointerEvents: "none", textAlign: "center" }}>
+            <svg width="60" height="40" viewBox="0 0 60 40" style={{ filter: "drop-shadow(0 3px 4px rgba(0,0,0,0.6))" }}>
+              {/* blood pool */}
+              <ellipse cx="30" cy="30" rx="26" ry="9" fill="rgba(180,20,40,0.5)" />
+              {/* slumped body (lying down), tinted with the victim's id color */}
+              <ellipse cx="22" cy="22" rx="13" ry="9" fill={c.idColor?.hex || "#888"} stroke="#0d0b14" strokeWidth="2" />
+              <circle cx="40" cy="20" r="9" fill="#f3d9c6" stroke="#0d0b14" strokeWidth="2" />
+              {/* x_x eyes */}
+              <path d="M36 18 l3 3 M39 18 l-3 3" stroke="#0d0b14" strokeWidth="1.5" />
+              <path d="M43 18 l3 3 M46 18 l-3 3" stroke="#0d0b14" strokeWidth="1.5" />
+            </svg>
+            <div style={{ fontFamily: "var(--impact)", fontSize: 9, color: "#ff6b81", background: "rgba(13,11,20,0.85)", padding: "0 5px", whiteSpace: "nowrap", marginTop: -4 }}>☠ BODY</div>
+          </div>
+        );
+      })}
       {/* in-world TASK markers: a yellow "!" you walk up to and press E. Only your
           own uncompleted tasks show, in the room you're in. Glows brighter when
           you're close enough to interact. */}
@@ -263,7 +283,7 @@ export default function IsoStage({ view, emoteBubbles = {} }) {
           const isYou = p.id === view.you?.id;
           return (
             <div key={p.id} style={{ position: "absolute", left: s.sx + ox, top: s.sy + oy }}>
-              <IsoPilot player={p} facing={r.facing || "SE"} moving={r.moving} isYou={isYou} scale={0.7}
+              <IsoPilot player={p} facing={r.facing || "SE"} moving={r.moving} isYou={isYou} scale={1.0}
                 showSymbol={a11y.colorblindShapes} showLabel={a11y.colorblindLabels} />
               {emoteBubbles[p.id] && <EmoteBubble emoji={emoteBubbles[p.id].emoji} />}
               {a11y.ghostReadability && (p.plane === "energy" || p.plane === "eliminated") && (

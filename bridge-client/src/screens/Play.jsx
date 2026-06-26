@@ -291,6 +291,7 @@ function Match({ view, roomId, conn, events }) {
   const [escOpen, setEscOpen] = useState(false);
   const [activeTask, setActiveTask] = useState(null);
   const [throttleOpen, setThrottleOpen] = useState(false);
+  const [panelOpen, setPanelOpen] = useState(true);
   const comms = useComms({ view, roomId, conn, events });
   const emotes = useEmotes({ roomId, conn, events });
   const ctrl = useControls({
@@ -353,8 +354,29 @@ function Match({ view, roomId, conn, events }) {
         </div>
       )}
       {/* LEFT: ship status */}
+      {!panelOpen ? (
+        // Collapsed rail: just the key numbers in their colors + a show button.
+        <div style={{ ...sidePane, width: 92, padding: "16px 8px", display: "flex", flexDirection: "column", alignItems: "center", gap: 14 }}>
+          <button className="btn btn-ghost" style={{ fontSize: 11, padding: "4px 6px", width: "100%" }} onClick={() => setPanelOpen(true)} title="Show panel">▸</button>
+          <NumStat label="船体" value={view.hull} max={map.hullMax || 150} color="var(--hot)" />
+          <NumStat label="動力" value={Math.round(view.power)} max={1000} color="var(--gold)" />
+          <NumStat label="酸素" value={Math.round(you.oxygen)} max={100} color="var(--volt)" />
+          <NumStat label="旅" value={Math.round(view.journey?.distance || 0)} max={view.journey?.total || 1} color="var(--volt)" />
+          {(you.tasks || []).length > 0 && (
+            <div style={{ textAlign: "center" }}>
+              <div className="impactf" style={{ fontSize: 9, color: "var(--gold)", letterSpacing: "0.1em" }}>任務</div>
+              <div className="impactf" style={{ fontSize: 15, color: "var(--gold)", fontWeight: 800 }}>
+                {(you.tasks || []).filter((t) => t.done).length}/{(you.tasks || []).length}
+              </div>
+            </div>
+          )}
+        </div>
+      ) : (
       <div style={sidePane}>
-        <div className="tag"><span>Ship status</span></div>
+        <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+          <div className="tag"><span>Ship status</span></div>
+          <button className="btn btn-ghost" style={{ fontSize: 11, padding: "4px 8px" }} onClick={() => setPanelOpen(false)} title="Hide panel">◂ Hide</button>
+        </div>
         <Gauge label="HULL" value={view.hull} max={map.hullMax || 150} color="var(--hot)" kanji="船体" />
         <Gauge label="POWER" value={Math.round(view.power)} max={1000} color="var(--gold)" kanji="動力" />
         <Gauge label="YOUR O₂" value={Math.round(you.oxygen)} max={100} color="var(--volt)" kanji="酸素" />
@@ -395,19 +417,20 @@ function Match({ view, roomId, conn, events }) {
                 const hereNow = t.room === room && !t.done;
                 return (
                   <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11.5,
-                    padding: "4px 8px", border: `1px solid ${hereNow ? "var(--gold)" : "var(--line)"}`,
-                    background: hereNow ? "rgba(255,200,61,0.08)" : "transparent", opacity: t.done ? 0.45 : 1 }}>
-                    <span style={{ color: t.done ? "var(--volt)" : hereNow ? "var(--gold)" : "var(--dim)" }}>{t.done ? "✓" : "◆"}</span>
+                    padding: "4px 8px", border: `1px solid ${hereNow ? "var(--gold)" : "rgba(255,200,61,0.4)"}`,
+                    background: hereNow ? "rgba(255,200,61,0.12)" : "transparent", opacity: t.done ? 0.45 : 1 }}>
+                    <span style={{ color: "var(--gold)" }}>{t.done ? "✓" : "❗"}</span>
                     <span style={{ flex: 1, textDecoration: t.done ? "line-through" : "none" }}>{t.name}</span>
-                    <span className="impactf" style={{ fontSize: 9, color: hereNow ? "var(--gold)" : "var(--dim)" }}>{t.room}</span>
+                    <span className="impactf" style={{ fontSize: 9, color: "var(--gold)" }}>{t.room}</span>
                   </div>
                 );
               })}
             </div>
-            <div className="faint" style={{ fontSize: 10, marginTop: 5 }}>Walk to a task's room, then press E (or the button below).</div>
+            <div className="faint" style={{ fontSize: 10, marginTop: 5 }}>Walk to a yellow ❗ in the world and press E.</div>
           </div>
         )}
       </div>
+      )}
 
       {/* CENTER: the isometric playfield (click to move) with a floating HUD */}
       <div style={{ position: "relative", overflow: "hidden" }}>
@@ -417,7 +440,7 @@ function Match({ view, roomId, conn, events }) {
         {onEnergy && (
           <>
             <div style={{ position: "absolute", inset: 0, pointerEvents: "none", background: "radial-gradient(120% 100% at 50% 50%, transparent 30%, rgba(70,230,255,0.10) 100%)", boxShadow: "inset 0 0 120px rgba(70,230,255,0.25)" }} />
-            <div style={{ position: "absolute", top: 70, left: "50%", transform: "translateX(-50%)", textAlign: "center", pointerEvents: "none" }}>
+            <div style={{ position: "absolute", top: 130, left: "50%", transform: "translateX(-50%)", textAlign: "center", pointerEvents: "none" }}>
               <div className="kanji" style={{ fontSize: 18, color: "var(--volt)", letterSpacing: "0.3em" }}>霊体</div>
               <div className="impactf" style={{ fontSize: 13, color: "var(--volt)", letterSpacing: "0.12em" }}>ENERGY PLANE — STILL IN PLAY</div>
               <div className="faint" style={{ fontSize: 11, marginTop: 2 }}>Finish energy tasks to help your team. A second pull on this plane ends you for good.</div>
@@ -436,7 +459,7 @@ function Match({ view, roomId, conn, events }) {
 
         {/* hint + vote opener + comms */}
         <div style={{ position: "absolute", top: 14, right: 18, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
-          <div className="impactf faint" style={{ fontSize: 10, letterSpacing: "0.12em", pointerEvents: "none" }}>CLICK FLOOR TO MOVE · HOLD C FOR COMMS</div>
+          <div className="impactf faint" style={{ fontSize: 10, letterSpacing: "0.12em", pointerEvents: "none" }}>WASD MOVE · E INTERACT · Z EMOTE · V VOTE</div>
           <div className="row gap-s">
             <button className="btn" style={{ fontSize: 13, padding: "8px 14px", borderColor: "var(--volt)" }} onClick={() => comms.setOpen(true)}>声 COMMS</button>
             <button className="btn" style={{ fontSize: 13, padding: "8px 14px", borderColor: "var(--gold)" }} onClick={() => emotes.setOpen(true)}>😊 EMOTE</button>
@@ -469,7 +492,7 @@ function Match({ view, roomId, conn, events }) {
 
         {/* ATTACK WARNING: 10s heads-up (like a sabotage alert) — rush to Helm + turrets. */}
         {view.attackWarning && (
-          <div style={{ position: "absolute", top: 40, left: "50%", transform: "translateX(-50%)", zIndex: 75,
+          <div style={{ position: "absolute", top: 90, left: "50%", transform: "translateX(-50%)", zIndex: 75,
             display: "flex", alignItems: "center", gap: 12, padding: "10px 20px",
             background: "rgba(40,6,10,0.95)", border: "2px solid var(--hot)", animation: "pulse 1s infinite",
             boxShadow: "0 0 30px rgba(255,45,77,0.5)" }}>
@@ -498,11 +521,33 @@ function Match({ view, roomId, conn, events }) {
               <input type="range" min={0} max={100} value={Math.round((view.systems?.targetAllocation ?? 0.5) * 100)}
                 onChange={(e) => conn.setAllocation(roomId, Number(e.target.value) / 100)}
                 style={{ width: "100%", accentColor: "var(--gold)", margin: "8px 0", height: 24 }} />
+
+              {/* SET vs ACTUAL: target is what you dialed in; actual ramps toward it. */}
+              {(() => {
+                const target = view.systems?.targetAllocation ?? 0.5;
+                const actual = view.systems?.allocation ?? 0.5;
+                const Bar = ({ label, val, color, ghost }) => (
+                  <div style={{ margin: "8px 0" }}>
+                    <div className="row" style={{ justifyContent: "space-between", fontSize: 10, marginBottom: 2 }}>
+                      <span className="impactf" style={{ color }}>{label}</span>
+                      <span className="impactf faint">{Math.round(val * 100)}% engines</span>
+                    </div>
+                    <div style={{ height: 10, background: "var(--ink)", border: "1px solid var(--line)", position: "relative" }}>
+                      <div style={{ height: "100%", width: `${val * 100}%`, background: color, opacity: ghost ? 0.5 : 1, transition: "width 0.3s ease" }} />
+                    </div>
+                  </div>
+                );
+                return (
+                  <>
+                    <Bar label="SET (target)" val={target} color="var(--gold)" />
+                    <Bar label={`ACTUAL${view.systems?.ramping ? " · ramping…" : ""}`} val={actual} color="var(--volt)" ghost />
+                  </>
+                );
+              })()}
               <div style={{ textAlign: "center", fontSize: 13, margin: "6px 0" }}>
-                <b style={{ color: "var(--volt)" }}>{Math.round((1 - (view.systems?.allocation ?? 0.5)) * 100)}%</b> shields
+                now <b style={{ color: "var(--volt)" }}>{Math.round((1 - (view.systems?.allocation ?? 0.5)) * 100)}%</b> shields
                 &nbsp;/&nbsp;
                 <b style={{ color: "var(--gold)" }}>{Math.round((view.systems?.allocation ?? 0.5) * 100)}%</b> engines
-                {view.systems?.ramping && <span className="faint"> · ramping…</span>}
               </div>
               <div className="faint" style={{ fontSize: 11, textAlign: "center", marginTop: 6 }}>
                 Slowing down is quick (~5s); speeding up takes longer (~15s). During an attack, more shields = less hull damage.
@@ -526,7 +571,7 @@ function Match({ view, roomId, conn, events }) {
 
         {/* ATTACK WAVE: banner + turret combat. Shows when enemy planes are inbound. */}
         {view.attack && (
-          <div style={{ position: "absolute", top: 70, left: "50%", transform: "translateX(-50%)", zIndex: 70,
+          <div style={{ position: "absolute", top: 90, left: "50%", transform: "translateX(-50%)", zIndex: 70,
             display: "flex", alignItems: "center", gap: 14, padding: "10px 18px",
             background: "rgba(40,6,10,0.92)", border: "2px solid var(--hot)", boxShadow: "0 0 24px rgba(255,45,77,0.4)" }}>
             <span className="kanji" style={{ fontSize: 20, color: "var(--hot)" }}>襲来</span>
@@ -543,7 +588,7 @@ function Match({ view, roomId, conn, events }) {
         {/* TURRET controls: appear when you're standing in a turret room. Man it,
             then fire at the swarm. One pilot per turret (server-enforced). */}
         {(map.turretRooms || []).includes(room) && !onEnergy && (
-          <div style={{ position: "absolute", top: 150, left: "50%", transform: "translateX(-50%)", zIndex: 70,
+          <div style={{ position: "absolute", top: 210, left: "50%", transform: "translateX(-50%)", zIndex: 70,
             display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "12px 18px",
             background: "rgba(13,11,20,0.94)", border: "2px solid var(--volt)" }}>
             <div className="impactf" style={{ fontSize: 12, color: "var(--volt)" }}>{room}{view.yourTurret === room ? " · MANNED" : ""}</div>
@@ -563,7 +608,7 @@ function Match({ view, roomId, conn, events }) {
 
         {/* AIRLOCK distress: all living crew see who's trapped outside banging for help. */}
         {(view.airlock?.distress || []).length > 0 && !onEnergy && (
-          <div style={{ position: "absolute", top: 116, left: "50%", transform: "translateX(-50%)", zIndex: 72,
+          <div style={{ position: "absolute", top: 150, left: "50%", transform: "translateX(-50%)", zIndex: 72,
             padding: "8px 16px", background: "rgba(40,6,10,0.92)", border: "2px solid var(--hot)" }}>
             <span className="impactf" style={{ fontSize: 12, color: "var(--hot)" }}>
               🆘 {view.airlock.distress.map((d) => d.name).join(", ")} trapped outside the airlock!
@@ -811,6 +856,15 @@ function EscMenu({ onResume, onSurrender }) {
   );
 }
 
+// Compact stat for the collapsed side rail: kanji label + colored value/max only.
+function NumStat({ label, value, max, color }) {
+  return (
+    <div style={{ textAlign: "center" }}>
+      <div className="impactf" style={{ fontSize: 9, color, opacity: 0.8, letterSpacing: "0.1em" }}>{label}</div>
+      <div className="impactf" style={{ fontSize: 14, color, fontWeight: 800 }}>{value}<span style={{ opacity: 0.5, fontSize: 10 }}>/{max}</span></div>
+    </div>
+  );
+}
 function Gauge({ label, value, max, color, kanji }) {
   const pct = Math.max(0, Math.min(100, (value / max) * 100));
   return (
