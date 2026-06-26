@@ -12,11 +12,6 @@ import { EmoteBubble } from "./Emotes.jsx";
 // Iso projection: screen = ( (x - y) * COS, (x + y) * SIN ) — classic 2:1 iso.
 const ISO = { cos: 0.86, sin: 0.5, scale: 0.62 };
 function toScreen(wx, wy) { return { sx: (wx - wy) * ISO.cos * ISO.scale, sy: (wx + wy) * ISO.sin * ISO.scale }; }
-function toWorld(sx, sy) {
-  // invert the projection
-  const a = sx / (ISO.cos * ISO.scale), b = sy / (ISO.sin * ISO.scale);
-  return { wx: (a + b) / 2, wy: (b - a) / 2 };
-}
 
 // ---- Room art image cache ----
 // Each room TYPE may have a top-down art PNG at /assets/rooms/<slug>.png. We load
@@ -40,7 +35,7 @@ function getRoomImage(name) {
   return entry;
 }
 
-export default function IsoStage({ view, onMoveTo, emoteBubbles = {} }) {
+export default function IsoStage({ view, emoteBubbles = {} }) {
   const geo = view?.map?.geometry;
   const canvasRef = useRef(null);
   const wrapRef = useRef(null);
@@ -160,9 +155,34 @@ export default function IsoStage({ view, onMoveTo, emoteBubbles = {} }) {
           ctx.strokeStyle = "rgba(255,45,77,0.8)"; ctx.lineWidth = 2.5; ctx.stroke();
         }
       } else {
-        // fallback: the drawn diamond (current look) — keeps the game playable
-        // with no art present.
+        // fallback: drawn diamond + a subtle iso tech-grid texture so the floor
+        // doesn't read as flat. Keeps the game fully playable with no art present.
         ctx.fillStyle = here ? "#241d33" : "#1a1626"; ctx.fill();
+        // clip to the room and draw grid lines along the two iso axes
+        ctx.save();
+        ctx.clip();
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = here ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.04)";
+        const STEP = 56; // world units between grid lines
+        for (let gx = 0; gx <= r.w; gx += STEP) {
+          const p0 = toScreen(r.x + gx, r.y), p1 = toScreen(r.x + gx, r.y + r.h);
+          ctx.beginPath(); ctx.moveTo(p0.sx + ox, p0.sy + oy); ctx.lineTo(p1.sx + ox, p1.sy + oy); ctx.stroke();
+        }
+        for (let gy = 0; gy <= r.h; gy += STEP) {
+          const p0 = toScreen(r.x, r.y + gy), p1 = toScreen(r.x + r.w, r.y + gy);
+          ctx.beginPath(); ctx.moveTo(p0.sx + ox, p0.sy + oy); ctx.lineTo(p1.sx + ox, p1.sy + oy); ctx.stroke();
+        }
+        // a faint accent ring near the room edge for depth
+        const inset = 14;
+        const e = [toScreen(r.x + inset, r.y + inset), toScreen(r.x + r.w - inset, r.y + inset),
+                   toScreen(r.x + r.w - inset, r.y + r.h - inset), toScreen(r.x + inset, r.y + r.h - inset)];
+        ctx.strokeStyle = here ? "rgba(255,45,77,0.18)" : "rgba(90,81,112,0.18)";
+        ctx.beginPath(); ctx.moveTo(e[0].sx + ox, e[0].sy + oy);
+        for (let i = 1; i < 4; i++) ctx.lineTo(e[i].sx + ox, e[i].sy + oy); ctx.closePath(); ctx.stroke();
+        ctx.restore();
+        // room outline
+        ctx.beginPath(); ctx.moveTo(c[0].x, c[0].y);
+        for (let i = 1; i < 4; i++) ctx.lineTo(c[i].x, c[i].y); ctx.closePath();
         ctx.strokeStyle = here ? "rgba(255,45,77,0.7)" : "rgba(90,81,112,0.5)";
         ctx.lineWidth = here ? 2.5 : 1.5; ctx.stroke();
         ctx.restore();
@@ -199,29 +219,28 @@ export default function IsoStage({ view, onMoveTo, emoteBubbles = {} }) {
     }
   }
 
-  // click-to-move: screen -> world (account for camera) -> setDestination
-  function onClick(e) {
-    if (!geo) return;
-    const rect = wrapRef.current.getBoundingClientRect();
-    const { ox, oy } = camera();
-    const sx = e.clientX - rect.left - ox, sy = e.clientY - rect.top - oy;
-    const { wx, wy } = toWorld(sx, sy);
-    onMoveTo(Math.round(wx), Math.round(wy));
-  }
-
   if (!geo) return <div style={{ display: "grid", placeItems: "center", height: "100%", color: "var(--faint)" }} className="impactf">NO SPATIAL MAP</div>;
 
   const { ox, oy } = camera();
   const players = view.players || [];
 
   return (
-    <div ref={wrapRef} onClick={onClick} style={{ position: "relative", width: "100%", height: "100%", overflow: "hidden", cursor: "crosshair", background: "radial-gradient(120% 100% at 50% 30%, #15111f 0%, #0b0911 70%)" }}>
+    <div ref={wrapRef} style={{ position: "relative", width: "100%", height: "100%", overflow: "hidden", cursor: "default", background: "radial-gradient(120% 100% at 50% 30%, #15111f 0%, #0b0911 70%)" }}>
       <canvas ref={canvasRef} style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }} />
-      {/* destination marker */}
-      {view.you?.tx != null && (() => {
-        const s = toScreen(view.you.tx, view.you.ty);
-        return <div style={{ position: "absolute", left: s.sx + ox, top: s.sy + oy, width: 14, height: 14, transform: "translate(-50%,-50%)", border: "2px solid var(--hot)", borderRadius: "50%", pointerEvents: "none", opacity: 0.7 }} />;
-      })()}
+      {/* in-world TASK markers: a yellow "!" you walk up to and press E. Only your
+          own uncompleted tasks show, in the room you're in. Glows brighter when
+          you're close enough to interact. */}
+      {(view.you?.tasks || []).filter((t) => !t.done && t.x != null && t.room === view.you?.room).map((t) => {
+        const s = toScreen(t.x, t.y);
+        const near = view.you?.x != null && Math.hypot(t.x - view.you.x, t.y - view.you.y) <= 70;
+        return (
+          <div key={t.id} style={{ position: "absolute", left: s.sx + ox, top: s.sy + oy, transform: "translate(-50%,-100%)", pointerEvents: "none", textAlign: "center" }}>
+            <div style={{ fontSize: near ? 30 : 24, lineHeight: 1, color: "#ffd24d", fontWeight: 900,
+              textShadow: near ? "0 0 12px #ffd24d, 0 2px 3px #000" : "0 2px 3px #000", animation: "taskbob 1.2s ease-in-out infinite" }}>❗</div>
+            {near && <div style={{ fontFamily: "var(--impact)", fontSize: 10, color: "#ffd24d", background: "rgba(13,11,20,0.85)", padding: "1px 6px", marginTop: 2, whiteSpace: "nowrap" }}>E · {t.name}</div>}
+          </div>
+        );
+      })}
       {/* characters, depth-sorted by world y+x so nearer ones overlap farther */}
       {[...players]
         .filter((p) => p.x != null && p.y != null)
@@ -250,7 +269,7 @@ export default function IsoStage({ view, onMoveTo, emoteBubbles = {} }) {
             </div>
           );
         })}
-      <style>{`@keyframes pilotbob{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}} @keyframes emotePop{0%{transform:translateX(-50%) scale(0.3);opacity:0}60%{transform:translateX(-50%) scale(1.15)}100%{transform:translateX(-50%) scale(1);opacity:1}}`}</style>
+      <style>{`@keyframes pilotbob{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}} @keyframes emotePop{0%{transform:translateX(-50%) scale(0.3);opacity:0}60%{transform:translateX(-50%) scale(1.15)}100%{transform:translateX(-50%) scale(1);opacity:1}} @keyframes taskbob{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}`}</style>
     </div>
   );
 }

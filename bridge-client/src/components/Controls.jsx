@@ -17,7 +17,7 @@ const DEFAULT_BINDS = {
   interact: "KeyE", useTool: "KeyF", sabotage: "KeyQ", commsWheel: "KeyC",
 };
 
-export function useControls({ view, roomId, conn, onOpenTask, onOpenSabotage, taskOpen }) {
+export function useControls({ view, roomId, conn, onOpenTask, onOpenSabotage, onOpenThrottle, taskOpen }) {
   const [binds, setBinds] = useState(DEFAULT_BINDS);
   const [showHints, setShowHints] = useState(true);
   const [showTips, setShowTips] = useState(true);
@@ -49,7 +49,7 @@ export function useControls({ view, roomId, conn, onOpenTask, onOpenSabotage, ta
       }
       if (taskOpen) return; // the task mini-game has its own controls
       e.preventDefault();
-      if (action === "interact") doInteract(v, roomId, conn, onOpenTask);
+      if (action === "interact") doInteract(v, roomId, conn, onOpenTask, onOpenThrottle);
       else if (action === "useTool") doUseTool(v, roomId, conn);
       else if (action === "sabotage" && v.you?.role === "impostor") onOpenSabotage?.();
     };
@@ -57,7 +57,7 @@ export function useControls({ view, roomId, conn, onOpenTask, onOpenSabotage, ta
     window.addEventListener("keydown", down);
     window.addEventListener("keyup", up);
     return () => { window.removeEventListener("keydown", down); window.removeEventListener("keyup", up); };
-  }, [binds, roomId, conn, taskOpen, onOpenTask, onOpenSabotage]);
+  }, [binds, roomId, conn, taskOpen, onOpenTask, onOpenSabotage, onOpenThrottle]);
 
   // movement loop: while a WASD key is held, push the destination in that dir
   useEffect(() => {
@@ -88,11 +88,29 @@ export function useControls({ view, roomId, conn, onOpenTask, onOpenSabotage, ta
 }
 
 // --- action resolvers (mirror what the HUD buttons do) ---
-function doInteract(v, roomId, conn, onOpenTask) {
+const INTERACT_RANGE = 70; // world units — how close you must be to a "!" marker
+
+function nearestTask(v) {
+  const you = v.you || {};
+  if (you.x == null) return null;
+  let best = null, bestD = INTERACT_RANGE;
+  for (const t of (you.tasks || [])) {
+    if (t.done || t.room !== you.room || t.x == null) continue;
+    const d = Math.hypot(t.x - you.x, t.y - you.y);
+    if (d <= bestD) { best = t; bestD = d; }
+  }
+  return best;
+}
+
+function doInteract(v, roomId, conn, onOpenTask, onOpenThrottle) {
   const you = v.you || {};
   const room = you.room;
-  const task = (you.tasks || []).find((t) => t.room === room && !t.done);
+  // 1) a task marker you're standing near
+  const task = nearestTask(v);
   if (task) { conn.startTask(roomId, task.id); onOpenTask?.(task); return; }
+  // 2) the Helm throttle (interactable when you're in the Helm)
+  if (room === (v.helm?.room || v.map?.spawnRoom) && onOpenThrottle) { onOpenThrottle(); return; }
+  // 3) station actions
   if ((v.map?.refillRooms || []).includes(room)) { conn.refill(roomId); return; }
   if ((v.map?.repairRooms || []).includes(room)) { conn.repair(roomId); return; }
 }
@@ -118,13 +136,13 @@ function computeHints(view, binds, taskOpen) {
     return out;
   }
 
-  // movement is always available
+  // movement is always available (WASD only — click-to-move removed)
   out.push({ key: `${key(binds.moveUp)}${key(binds.moveLeft)}${key(binds.moveDown)}${key(binds.moveRight)}`, label: "Move", combo: true });
-  out.push({ key: "Click", label: "Move to point" });
 
-  // contextual: task / refill / repair on E
-  const task = (you.tasks || []).find((t) => t.room === room && !t.done);
+  // contextual: only when you're standing near the relevant thing
+  const task = nearestTask(view);
   if (task) out.push({ key: key(binds.interact), label: `Do task: ${task.name}`, hot: true });
+  else if (room === (view.helm?.room || view.map?.spawnRoom)) out.push({ key: key(binds.interact), label: "Throttle / power", hot: true });
   else if ((view.map?.refillRooms || []).includes(room)) out.push({ key: key(binds.interact), label: "Refill O₂", hot: true });
   else if ((view.map?.repairRooms || []).includes(room)) out.push({ key: key(binds.interact), label: "Repair hull", hot: true });
 

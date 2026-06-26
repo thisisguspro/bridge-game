@@ -185,7 +185,8 @@ export class GameEngine {
     if (!p) return;
     if (this.phase === PHASE.LOBBY) this.players.delete(id);
     else p.connected = false;
-    this._log("player_left", { id });
+    // Public announcement so the crew sees who dropped (name + whether mid-match).
+    this._log("player_left", { id, name: p.name, midMatch: this.phase === PHASE.ACTIVE });
   }
 
   // ---------- perk draft (before roles are revealed) ----------
@@ -340,14 +341,25 @@ export class GameEngine {
       const baseType = room.replace(/\s+\d+$/, "");
       const template = templateSet[room] || templateSet[baseType] || ["Run a system diagnostic", "Recalibrate instruments"];
       const pool = shuffle(template, this.rng).slice(0, this.map.tasksPerRoom);
+      const rect = this.map.geometry?.rooms?.[room];
+      let idx = 0;
       for (const name of pool) {
-        // pick a mini-game for this task (rng so the loadout varies per match)
         const game = gamePool[Math.floor(this.rng() * gamePool.length)];
+        // place the task marker at a spread-out spot in the room (avoids overlap
+        // and keeps it off the central walking lane). Falls back to room center.
+        let tx = null, ty = null;
+        if (rect) {
+          const spots = [[0.25, 0.28], [0.75, 0.28], [0.25, 0.74], [0.75, 0.74], [0.5, 0.2]];
+          const [fx, fy] = spots[idx % spots.length];
+          tx = rect.x + fx * rect.w; ty = rect.y + fy * rect.h;
+        }
         tasks.push({
           id: newId("task"), room, name, done: false,
           game, minSeconds: MINIGAMES[game].minSeconds,
+          x: tx, y: ty,        // world position of the interactable "!" marker
           startedAt: null, // set when the player begins the mini-game
         });
+        idx++;
       }
     }
     return tasks;
@@ -986,9 +998,12 @@ export class GameEngine {
     // ENERGY plane: every downed player's tasks count (design choice).
     const counts = p.plane === PLANE.ENERGY || p.role === ROLE.CREW;
     if (counts) {
-      const gain = this._eff("taskPower");
+      // Ghosts (downed/energy plane) still help, but at reduced output — half the
+      // power a living crew member generates per task.
+      const ghostMult = p.plane === PLANE.ENERGY ? TASK.GHOST_POWER_MULT : 1;
+      const gain = Math.round(this._eff("taskPower") * ghostMult);
       this.power = Math.min(this._eff("powerMax"), this.power + gain);
-      this._log("power_generated", { amount: gain, pool: Math.round(this.power) });
+      this._log("power_generated", { amount: gain, pool: Math.round(this.power), ghost: p.plane === PLANE.ENERGY });
       if (p.tasks.every((t) => t.done)) {
         p.tasks = this._assignTasks(p.plane === PLANE.ENERGY ? ENERGY_TASKS : ROOM_TASKS);
       }

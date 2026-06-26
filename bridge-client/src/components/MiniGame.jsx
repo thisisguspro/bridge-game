@@ -63,33 +63,71 @@ const GAME_LABELS = {
 };
 
 /* ---------------- wire connect ---------------- */
+// Drag a wire from a left port to its color-matching right port. Connections are
+// DRAWN as curved wires so you can see what's linked; a live wire follows the
+// cursor while you're mid-connection.
 function WireConnect({ accent, onComplete }) {
   const colors = ["#ff2d4d", "#46e6ff", "#ffc83d", "#9b6cff"];
   const [rightOrder] = useState(() => shuffle([0, 1, 2, 3]));
   const [picked, setPicked] = useState(null);
   const [linked, setLinked] = useState({}); // leftIdx -> rightIdx
+  const [cursor, setCursor] = useState(null); // {x,y} within the svg while dragging
+  const boxRef = useRef(null);
   useEffect(() => { if (Object.keys(linked).length === 4) onComplete(); }, [linked]); // eslint-disable-line
+
+  const W = 260, H = 200, padY = 26, gap = (H - padY * 2) / 3;
+  const leftX = 40, rightX = W - 40;
+  const leftY = (i) => padY + i * gap;
+  const rightY = (i) => padY + i * gap;
+
   const link = (rightIdx) => {
     if (picked == null) return;
     if (rightOrder[rightIdx] === picked) setLinked((l) => ({ ...l, [picked]: rightIdx }));
-    setPicked(null);
+    setPicked(null); setCursor(null);
   };
+  const onMove = (e) => {
+    if (picked == null || !boxRef.current) return;
+    const r = boxRef.current.getBoundingClientRect();
+    setCursor({ x: e.clientX - r.left, y: e.clientY - r.top });
+  };
+  const wirePath = (x1, y1, x2, y2) => {
+    const mx = (x1 + x2) / 2;
+    return `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`;
+  };
+
   return (
-    <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 30px" }}>
-      <div className="col" style={{ gap: 14 }}>
-        {colors.map((c, i) => (
-          <button key={i} disabled={i in linked} onClick={() => setPicked(i)}
-            style={{ width: 38, height: 26, background: c, opacity: i in linked ? 0.35 : 1, border: picked === i ? "3px solid #fff" : "2px solid var(--ink)", cursor: "pointer" }} />
-        ))}
-      </div>
-      <div className="col" style={{ gap: 14 }}>
-        {rightOrder.map((c, i) => {
-          const isLinked = Object.values(linked).includes(i);
-          return <button key={i} onClick={() => link(i)}
-            style={{ width: 38, height: 26, background: colors[c], opacity: isLinked ? 1 : 0.4, border: "2px solid var(--ink)", cursor: "pointer" }} />;
-        })}
-      </div>
-    </div>
+    <svg ref={boxRef} viewBox={`0 0 ${W} ${H}`} width={W} height={H} style={{ display: "block", margin: "0 auto" }}
+      onMouseMove={onMove} onMouseLeave={() => setCursor(null)}>
+      {/* completed connections, drawn in their color */}
+      {Object.entries(linked).map(([li, ri]) => (
+        <path key={li} d={wirePath(leftX, leftY(+li), rightX, rightY(+ri))}
+          stroke={colors[+li]} strokeWidth={4} fill="none" strokeLinecap="round" opacity={0.95} />
+      ))}
+      {/* live wire from the picked port to the cursor */}
+      {picked != null && cursor && (
+        <path d={wirePath(leftX, leftY(picked), cursor.x, cursor.y)}
+          stroke={colors[picked]} strokeWidth={3} fill="none" strokeDasharray="6 5" opacity={0.8} />
+      )}
+      {/* left ports */}
+      {colors.map((c, i) => (
+        <g key={"L" + i} style={{ cursor: i in linked ? "default" : "pointer" }} onMouseDown={() => !(i in linked) && setPicked(i)}>
+          <rect x={leftX - 22} y={leftY(i) - 12} width={28} height={24} rx={4} fill={c}
+            opacity={i in linked ? 0.4 : 1} stroke={picked === i ? "#fff" : "#0d0b14"} strokeWidth={picked === i ? 3 : 2} />
+          <circle cx={leftX} cy={leftY(i)} r={5} fill="#0d0b14" />
+        </g>
+      ))}
+      {/* right ports (shuffled colors) */}
+      {rightOrder.map((c, i) => {
+        const isLinked = Object.values(linked).includes(i);
+        return (
+          <g key={"R" + i} style={{ cursor: "pointer" }} onMouseUp={() => link(i)} onMouseDown={() => link(i)}>
+            <rect x={rightX - 6} y={rightY(i) - 12} width={28} height={24} rx={4} fill={colors[c]}
+              opacity={isLinked ? 1 : 0.45} stroke="#0d0b14" strokeWidth={2} />
+            <circle cx={rightX} cy={rightY(i)} r={5} fill="#0d0b14" />
+          </g>
+        );
+      })}
+    </svg>
   );
 }
 

@@ -9,6 +9,7 @@ import { SabotageMenu, SabotageAlerts } from "../components/Sabotage.jsx";
 import MiniGame from "../components/MiniGame.jsx";
 import { useControls, ControlHints, TipBubble } from "../components/Controls.jsx";
 import TrollScreen from "../components/TrollScreen.jsx";
+import TurretGame from "../components/TurretGame.jsx";
 import { useEmotes, EmoteWheel } from "../components/Emotes.jsx";
 import { playSound } from "../util/sound.js";
 import { SOUND_EVENTS } from "../util/soundEvents.js";
@@ -47,6 +48,11 @@ export default function Play({ user, profile, onMatchActiveChange }) {
           if (e.type === "player_eliminated") {
             seenEvents.current.add(key);
             setFlash({ text: "追放", sub: "PILOT EJECTED", color: "var(--hot)" });
+          }
+          if ((e.type === "player_left" || e.type === "player_surrendered") && e.name) {
+            seenEvents.current.add(key);
+            const verb = e.type === "player_surrendered" ? "surrendered" : "left the ship";
+            setFlash({ text: "離脱", sub: `${e.name} ${verb}`, color: "var(--dim)" });
           }
         }
         if (seenEvents.current.size > 200) seenEvents.current = new Set();
@@ -233,9 +239,14 @@ function LobbyRoom({ view, roomId, conn, isHost, streamerMode }) {
         </div>
       </div>
 
-      <div className="panel" style={{ padding: 18 }}>
-        <MiniMap view={view} compact />
-        <div className="faint" style={{ fontSize: 12, marginTop: 12 }}>Map: {view?.map?.id} · scaled to {view?.map?.maxPlayers} pilots</div>
+      <div className="panel" style={{ padding: 18, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14 }}>
+        <div className="kanji" style={{ fontSize: 28, color: "var(--volt)", opacity: 0.8 }}>待機</div>
+        <div className="display" style={{ fontSize: 22, textAlign: "center" }}>STANDING BY</div>
+        <div style={{ fontSize: 52, fontWeight: 800, color: "var(--hot)", lineHeight: 1 }}>{players.length}<span className="faint" style={{ fontSize: 22 }}>/{view?.map?.maxPlayers}</span></div>
+        <div className="faint" style={{ fontSize: 12, textAlign: "center" }}>pilots aboard</div>
+        <div className="faint" style={{ fontSize: 11, textAlign: "center", marginTop: 6, opacity: 0.7 }}>
+          The ship layout is revealed when the match begins — every voyage is different.
+        </div>
       </div>
     </div>
   );
@@ -279,6 +290,7 @@ function Match({ view, roomId, conn, events }) {
   const [sabOpen, setSabOpen] = useState(false);
   const [escOpen, setEscOpen] = useState(false);
   const [activeTask, setActiveTask] = useState(null);
+  const [throttleOpen, setThrottleOpen] = useState(false);
   const comms = useComms({ view, roomId, conn, events });
   const emotes = useEmotes({ roomId, conn, events });
   const ctrl = useControls({
@@ -286,24 +298,34 @@ function Match({ view, roomId, conn, events }) {
     taskOpen: !!activeTask,
     onOpenTask: (t) => setActiveTask(t),
     onOpenSabotage: () => setSabOpen(true),
+    onOpenThrottle: () => setThrottleOpen(true),
   });
-  // Esc toggles the in-game menu (Options + Surrender); V opens the eject-vote
-  // panel; Z opens the emote wheel. Ignored while typing.
+  // Esc closes whatever interactable is open FIRST (minigame, throttle, wheels,
+  // sabotage menu); only if nothing is open does it open the pause/options menu.
+  // V = vote, Z = emote wheel. Ignored while typing.
   useEffect(() => {
     const onKey = (e) => {
       if (e.target && /input|textarea/i.test(e.target.tagName)) return;
-      if (e.code === "Escape") { e.preventDefault(); setEscOpen((o) => !o); }
+      if (e.code === "Escape") {
+        e.preventDefault();
+        if (activeTask) { setActiveTask(null); return; }
+        if (throttleOpen) { setThrottleOpen(false); return; }
+        if (sabOpen) { setSabOpen(false); return; }
+        if (comms.open) { comms.setOpen(false); return; }
+        if (emotes.open) { emotes.setOpen(false); return; }
+        if (voteOpen) { setVoteOpen(false); return; }
+        setEscOpen((o) => !o);
+      }
       else if (e.code === "KeyV" && !activeTask) { e.preventDefault(); setVoteOpen((o) => !o); }
       else if (e.code === "KeyZ" && !activeTask) { e.preventDefault(); emotes.setOpen((o) => !o); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [activeTask, emotes]);
+  }, [activeTask, throttleOpen, sabOpen, comms, emotes, voteOpen]);
   const you = view.you || {};
   const room = you.room;
   const map = view.map || {};
   const here = (view.players || []).filter((p) => p.room === room && p.id !== you.id);
-  const myTasks = (you.tasks || []).filter((t) => t.room === room && !t.done);
   const isImpostor = you.role === "impostor";
   const onEnergy = you.plane === "energy";
 
@@ -377,7 +399,7 @@ function Match({ view, roomId, conn, events }) {
 
       {/* CENTER: the isometric playfield (click to move) with a floating HUD */}
       <div style={{ position: "relative", overflow: "hidden" }}>
-        <IsoStage view={view} onMoveTo={(x, y) => conn.setDestination(roomId, x, y)} emoteBubbles={emotes.bubbles} />
+        <IsoStage view={view} emoteBubbles={emotes.bubbles} />
 
         {/* energy-plane wash + banner when you've crossed over */}
         {onEnergy && (
@@ -447,24 +469,33 @@ function Match({ view, roomId, conn, events }) {
           </div>
         )}
 
-        {/* HELM allocation slider: shown in the Helm room. Anyone here can shift the
-            balance between SHIELDS (slow, safe) and ENGINES (fast, exposed). The
-            ship ramps to the new setting gradually. */}
-        {room === view.helm?.room && !onEnergy && (
-          <div style={{ position: "absolute", bottom: 120, left: "50%", transform: "translateX(-50%)", zIndex: 70,
-            width: 340, maxWidth: "80%", padding: "12px 18px",
-            background: "rgba(13,11,20,0.94)", border: "2px solid var(--gold)" }}>
-            <div className="impactf" style={{ fontSize: 12, color: "var(--gold)", marginBottom: 8 }}>HELM · POWER ALLOCATION</div>
-            <div className="row" style={{ justifyContent: "space-between", fontSize: 10 }}>
-              <span className="faint" style={{ color: "var(--volt)" }}>◀ SHIELDS (slow/safe)</span>
-              <span className="faint" style={{ color: "var(--gold)" }}>ENGINES (fast) ▶</span>
-            </div>
-            <input type="range" min={0} max={100} value={Math.round((view.systems?.targetAllocation ?? 0.5) * 100)}
-              onChange={(e) => conn.setAllocation(roomId, Number(e.target.value) / 100)}
-              style={{ width: "100%", accentColor: "var(--gold)", margin: "6px 0" }} />
-            <div className="faint" style={{ fontSize: 10, textAlign: "center" }}>
-              now {Math.round((1 - (view.systems?.allocation ?? 0.5)) * 100)}% shields / {Math.round((view.systems?.allocation ?? 0.5) * 100)}% engines
-              {view.systems?.ramping ? " · ramping…" : ""}
+        {/* HELM throttle: an interactable — walk to the Helm, press E to open this
+            modal, adjust the SHIELDS↔ENGINES balance, Esc to close. The ship ramps
+            to the new setting gradually. */}
+        {throttleOpen && room === view.helm?.room && !onEnergy && (
+          <div style={{ position: "fixed", inset: 0, zIndex: 220, display: "grid", placeItems: "center", background: "rgba(5,4,9,0.55)" }}
+            onClick={(e) => { if (e.target === e.currentTarget) setThrottleOpen(false); }}>
+            <div style={{ width: 420, maxWidth: "90vw", padding: "22px 24px", background: "rgba(13,11,20,0.98)", border: "2px solid var(--gold)",
+              clipPath: "polygon(0 0,calc(100% - 16px) 0,100% 16px,100% 100%,16px 100%,0 calc(100% - 16px))" }}>
+              <div className="kanji" style={{ fontSize: 16, color: "var(--gold)" }}>操舵</div>
+              <div className="display" style={{ fontSize: 26, marginBottom: 14, color: "var(--gold)" }}>HELM THROTTLE</div>
+              <div className="row" style={{ justifyContent: "space-between", fontSize: 11, marginBottom: 4 }}>
+                <span className="faint" style={{ color: "var(--volt)" }}>◀ SHIELDS · slow & safe</span>
+                <span className="faint" style={{ color: "var(--gold)" }}>ENGINES · fast & exposed ▶</span>
+              </div>
+              <input type="range" min={0} max={100} value={Math.round((view.systems?.targetAllocation ?? 0.5) * 100)}
+                onChange={(e) => conn.setAllocation(roomId, Number(e.target.value) / 100)}
+                style={{ width: "100%", accentColor: "var(--gold)", margin: "8px 0", height: 24 }} />
+              <div style={{ textAlign: "center", fontSize: 13, margin: "6px 0" }}>
+                <b style={{ color: "var(--volt)" }}>{Math.round((1 - (view.systems?.allocation ?? 0.5)) * 100)}%</b> shields
+                &nbsp;/&nbsp;
+                <b style={{ color: "var(--gold)" }}>{Math.round((view.systems?.allocation ?? 0.5) * 100)}%</b> engines
+                {view.systems?.ramping && <span className="faint"> · ramping…</span>}
+              </div>
+              <div className="faint" style={{ fontSize: 11, textAlign: "center", marginTop: 6 }}>
+                Slowing down is quick (~5s); speeding up takes longer (~15s). During an attack, more shields = less hull damage.
+              </div>
+              <button className="btn btn-ghost" style={{ width: "100%", marginTop: 14, fontSize: 13 }} onClick={() => setThrottleOpen(false)}>Done (Esc)</button>
             </div>
           </div>
         )}
@@ -499,9 +530,9 @@ function Match({ view, roomId, conn, events }) {
             <div className="impactf" style={{ fontSize: 12, color: "var(--volt)" }}>{room}{view.yourTurret === room ? " · MANNED" : ""}</div>
             {view.yourTurret === room ? (
               <>
-                <button className="btn btn-hot" style={{ fontSize: 22, padding: "12px 28px" }} disabled={!view.attack}
-                  onClick={() => conn.shootPlane(roomId)}>{view.attack ? "FIRE 🔫" : "No targets"}</button>
-                {view.attack && <div className="faint" style={{ fontSize: 11 }}>You've downed {view.planesDowned} this wave · spam to fire</div>}
+                {view.attack
+                  ? <TurretGame planesDowned={view.planesDowned} onHit={() => conn.shootPlane(roomId)} />
+                  : <div className="faint" style={{ fontSize: 12, padding: "8px 0" }}>No incoming wave. Stay manned — ships will come.</div>}
                 <button className="btn btn-ghost" style={{ fontSize: 11, padding: "4px 10px" }} onClick={() => conn.leaveTurret(roomId)}>Leave turret</button>
               </>
             ) : (
@@ -555,37 +586,28 @@ function Match({ view, roomId, conn, events }) {
           </div>
         )}
 
-        {/* bottom floating action bar */}
-        <div style={hudBar}>
-          {/* tasks here */}
-          {myTasks.length > 0 ? myTasks.map((t) => (
-            <button key={t.id} className="btn" style={{ fontSize: 12, padding: "10px 14px", textTransform: "none", borderColor: "var(--gold)" }} onClick={() => { conn.startTask(roomId, t.id); setActiveTask(t); }}>
-              ◆ {t.name}
-            </button>
-          )) : <span className="faint impactf" style={{ fontSize: 11, alignSelf: "center" }}>NO TASKS HERE</span>}
-
-          <span style={{ width: 1, background: "var(--line)", alignSelf: "stretch", margin: "0 4px" }} />
-
-          {(map.refillRooms || []).includes(room) && <button className="btn" style={hudBtn} onClick={act(() => conn.refill(roomId))}>Refill O₂</button>}
-          {(map.repairRooms || []).includes(room) && <button className="btn" style={hudBtn} onClick={act(() => conn.repair(roomId))}>Repair</button>}
-          {isImpostor && <button className="btn" style={{ ...hudBtn, borderColor: "var(--violet)" }} onClick={() => setSabOpen(true)}>妨害 Sabotage</button>}
-
-          {/* pilots in the same room: shows who's here + impostor pull. Voting is
-              NOT here anymore — press V or use the top-right EJECT VOTE panel. */}
-          {here.map((p) => (
-            <span key={p.id} className="row gap-s" style={{ padding: "4px 8px", border: `1px solid ${p.idColor?.hex || "var(--line)"}`, alignItems: "center" }}>
-              <span style={{ ...crewDot, width: 10, height: 10, background: p.idColor?.hex || "var(--dim)" }} />
-              <span style={{ fontSize: 12, fontWeight: 700 }}>{p.name}</span>
-              {isImpostor && p.plane === you.plane && <button className="btn" style={miniBtn} onClick={act(() => conn.detachCable(roomId, p.id))}>Pull</button>}
-            </span>
-          ))}
-        </div>
+        {/* bottom floating action bar — slim. Tasks are now in-world ('!' markers,
+            press E). This bar only shows contextual actions for where you are. */}
+        {((map.refillRooms || []).includes(room) || (map.repairRooms || []).includes(room) || isImpostor || here.length > 0) && (
+          <div style={hudBar}>
+            {(map.refillRooms || []).includes(room) && <button className="btn" style={hudBtn} onClick={act(() => conn.refill(roomId))}>Refill O₂</button>}
+            {(map.repairRooms || []).includes(room) && <button className="btn" style={hudBtn} onClick={act(() => conn.repair(roomId))}>Repair</button>}
+            {isImpostor && <button className="btn" style={{ ...hudBtn, borderColor: "var(--violet)" }} onClick={() => setSabOpen(true)}>妨害 Sabotage</button>}
+            {here.map((p) => (
+              <span key={p.id} className="row gap-s" style={{ padding: "4px 8px", border: `1px solid ${p.idColor?.hex || "var(--line)"}`, alignItems: "center" }}>
+                <span style={{ ...crewDot, width: 10, height: 10, background: p.idColor?.hex || "var(--dim)" }} />
+                <span style={{ fontSize: 12, fontWeight: 700 }}>{p.name}</span>
+                {isImpostor && p.plane === you.plane && <button className="btn" style={miniBtn} onClick={act(() => conn.detachCable(roomId, p.id))}>Pull</button>}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* RIGHT: minimap */}
       <div style={{ ...sidePane, borderLeft: "2px solid var(--line)", borderRight: "none" }}>
         <MiniMap view={view} compact />
-        <div className="faint" style={{ fontSize: 12, marginTop: 14 }}>Click anywhere on the floor to walk there. Walk into stations to use them, and into other pilots to act.</div>
+        <div className="faint" style={{ fontSize: 12, marginTop: 14 }}>WASD to move. Walk to a yellow ❗ and press E to do a task. Visit the Helm to set the throttle.</div>
       </div>
     </div>
   );
@@ -610,6 +632,29 @@ function Results({ view, roomId, conn, profile, onLeave }) {
   const xpGain = 50 + (iWon ? 75 : 0);
   const [rematchSent, setRematchSent] = useState(false);
   const isHost = you.id === view.hostId;
+
+  // Pull the unlock ladder + cosmetics so we can show what the NEXT level grants
+  // and a progress bar projecting the XP just earned this match.
+  const [ladder, setLadder] = useState(null);
+  const [cosmeticsById, setCosmeticsById] = useState({});
+  useEffect(() => {
+    api.getCatalogue?.().then((c) => {
+      setLadder(c?.ladder || {});
+      const map = {}; for (const cz of (c?.cosmetics || [])) map[cz.id] = cz; setCosmeticsById(map);
+    }).catch(() => {});
+  }, []);
+
+  // progression math (projected with this match's XP)
+  let prog = null;
+  if (profile && profile.nextLevelAt != null) {
+    const bandStart = profile.nextLevelAt - profile.xpToNext;          // xp at start of this level
+    const projectedXp = profile.xp + xpGain;
+    const pct = Math.max(0, Math.min(100, ((projectedXp - bandStart) / (profile.nextLevelAt - bandStart)) * 100)) || 0;
+    const willLevel = projectedXp >= profile.nextLevelAt;
+    const nextLvl = profile.level + 1;
+    const nextDef = ladder ? ladder[nextLvl] : null;
+    prog = { pct, willLevel, nextLvl, nextDef, remaining: Math.max(0, profile.nextLevelAt - projectedXp) };
+  }
 
   // If the host rematches, the room flips back to lobby — Play's phase switch
   // handles the screen change; we just fire the action.
@@ -665,12 +710,44 @@ function Results({ view, roomId, conn, profile, onLeave }) {
             <div className="display" style={{ fontSize: 72, color: "var(--gold)", lineHeight: 0.9, textShadow: "0 0 40px rgba(255,200,61,0.3)" }}>+{xpGain}</div>
             <div className="dim" style={{ fontSize: 13 }}>50 base{iWon ? " + 75 victory bonus" : ""}</div>
           </div>
-          {profile && (
-            <div className="panel" style={{ padding: 14, marginBottom: 24 }}>
-              <div className="row" style={{ justifyContent: "space-between", fontSize: 13 }}>
-                <span className="dim">Rank</span><span className="impactf">LV {profile.level}</span>
+          {profile && prog && (
+            <div className="panel" style={{ padding: 16, marginBottom: 24 }}>
+              <div className="row" style={{ justifyContent: "space-between", fontSize: 13, marginBottom: 8 }}>
+                <span className="impactf">LV {profile.level}</span>
+                <span className="impactf" style={{ color: prog.willLevel ? "var(--gold)" : "var(--dim)" }}>
+                  {prog.willLevel ? "LEVEL UP!" : `LV ${prog.nextLvl}`}
+                </span>
               </div>
-              <div className="faint" style={{ fontSize: 11, marginTop: 4 }}>XP is awarded to your account by the server. Reopen the Hangar to see your updated rank.</div>
+              {/* progress bar toward the next level (projected with this match's XP) */}
+              <div style={{ height: 12, background: "var(--ink)", border: "1px solid var(--line)", overflow: "hidden" }}>
+                <div style={{ height: "100%", width: `${prog.pct}%`, background: prog.willLevel ? "var(--gold)" : "linear-gradient(90deg,var(--volt),var(--gold))", transition: "width 0.6s ease" }} />
+              </div>
+              <div className="faint" style={{ fontSize: 11, marginTop: 6 }}>
+                {prog.willLevel
+                  ? `You've reached Level ${prog.nextLvl}! New rewards unlocked.`
+                  : `${prog.remaining.toLocaleString()} XP to Level ${prog.nextLvl}`}
+              </div>
+              {/* what the next level unlocks */}
+              {prog.nextDef && (
+                <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--line)" }}>
+                  <div className="impactf faint" style={{ fontSize: 10, letterSpacing: "0.12em", marginBottom: 6 }}>LV {prog.nextLvl} UNLOCKS</div>
+                  <div className="impactf" style={{ fontSize: 12, color: "var(--paper)", marginBottom: 6 }}>{prog.nextDef.note || "New gear"}</div>
+                  <div className="col gap-s">
+                    {(prog.nextDef.grants || []).map((id) => (
+                      <div key={id} className="row gap-s" style={{ fontSize: 12, fontWeight: 600 }}>
+                        <span style={{ width: 6, height: 6, background: "var(--gold)", display: "inline-block" }} />
+                        <span>{cosmeticsById[id]?.name || id}</span>
+                      </div>
+                    ))}
+                    {(prog.nextDef.slots || []).map((s) => (
+                      <div key={s} className="row gap-s" style={{ fontSize: 12, fontWeight: 600, color: "var(--volt)" }}>
+                        <span style={{ width: 6, height: 6, background: "var(--volt)", display: "inline-block" }} />
+                        <span>New slot: {s}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
           <div className="grow" />

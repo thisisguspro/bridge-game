@@ -134,8 +134,8 @@ export const SOUND_EVENTS = {
 // World units are the same as the map geometry (a room is 120 units). At 180
 // units/sec a player crosses a room in well under a second and a corridor in ~1s.
 export const MOVE = {
-  SPEED_PER_SEC: 180,            // base glide speed in world units/sec
-  ARRIVE_EPS: 4,                 // within this many units = arrived
+  SPEED_PER_SEC: 400,            // base glide speed (scaled for the larger map)
+  ARRIVE_EPS: 6,                 // within this many units = arrived
 };
 
 // ---- Hull & combat ----
@@ -300,6 +300,9 @@ export const TASK = {
   EARLY_GRACE_SEC: 1.5,
   // A started task auto-expires if abandoned this long (so it can be restarted).
   ABANDON_SEC: 60,
+  // Ghosts (downed/energy plane) generate this fraction of a living crew member's
+  // task power — they still help, but less.
+  GHOST_POWER_MULT: 0.5,
 };
 // Physical and energy mini-game pools to assign from.
 const PHYSICAL_GAMES = ["wire_connect", "code_sequence", "alignment", "hold_timing"];
