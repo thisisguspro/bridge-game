@@ -602,6 +602,7 @@ export class GameEngine {
     this._requireActive();
     const p = this._player(playerId);
     if (p.plane !== PLANE.PHYSICAL) throw new Error("No tank to refill on the energy plane.");
+    if (p.inCorridor) throw new Error("Get to the station.");
     if (!this.map.refillRooms.includes(p.room)) throw new Error("No refill station here.");
     if (this._refillDisabled()) throw new Error("Refill stations are offline — life support is down.");
     if (this.power <= 0) throw new Error("No power — the oxygen machine is dead until tasks generate more.");
@@ -690,6 +691,7 @@ export class GameEngine {
     const p = this._player(playerId);
     if (p.plane !== PLANE.PHYSICAL) throw new Error("Downed players can't run repairs.");
     if (!this.map.repairRooms.includes(p.room)) throw new Error("No repair station here.");
+    if (p.inCorridor) throw new Error("Get to the station.");
     // Global shared cooldown: one repair per 30s across the whole crew, so hull
     // can't be spam-healed faster than the outlaws can pressure it.
     if (this.now < (this.repairCdUntil || 0)) {

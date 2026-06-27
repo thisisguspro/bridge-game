@@ -8,7 +8,7 @@ import { useMemo } from "react";
 //   • your current room — pulsing marker
 // Reads the live view the game server streams (rooms, adjacency, refillRooms,
 // turretRooms, your tasks, your room).
-export default function MiniMap({ view, compact = false }) {
+export default function MiniMap({ view, compact = false, local = false }) {
   const map = view?.map || {};
   const rooms = map.rooms || [];
   const adjacency = map.adjacency || null;
@@ -42,6 +42,28 @@ export default function MiniMap({ view, compact = false }) {
   const PAD = 0.08; // fraction padding so nodes/labels aren't clipped at edges
   // map a normalized 0..1 position into the padded viewBox
   const place = (p) => p ? { x: (PAD + p.x * (1 - 2 * PAD)) * vbW, y: (PAD + p.y * (1 - 2 * PAD)) * vbH } : null;
+
+  // Local mode: zoom into your room + its neighbors. We compute a window in
+  // normalized space around those rooms and remap positions into the viewBox.
+  let viewport = null;
+  const focusSet = new Set(local && myRoom && adjacency ? [myRoom, ...(adjacency[myRoom] || [])] : []);
+  if (local && myRoom && adjacency) {
+    const focus = [myRoom, ...(adjacency[myRoom] || [])].filter((r) => pos[r]);
+    if (focus.length) {
+      let minx = 1, maxx = 0, miny = 1, maxy = 0;
+      for (const r of focus) { const p = pos[r]; minx = Math.min(minx, p.x); maxx = Math.max(maxx, p.x); miny = Math.min(miny, p.y); maxy = Math.max(maxy, p.y); }
+      // pad the window and keep a minimum span so a lone room isn't over-zoomed
+      const padX = Math.max(0.12, (maxx - minx) * 0.4), padY = Math.max(0.12, (maxy - miny) * 0.4);
+      viewport = { x0: minx - padX, x1: maxx + padX, y0: miny - padY, y1: maxy + padY };
+    }
+  }
+  const placeL = (p) => {
+    if (!p) return null;
+    if (!viewport) return place(p);
+    const nx = (p.x - viewport.x0) / (viewport.x1 - viewport.x0 || 1);
+    const ny = (p.y - viewport.y0) / (viewport.y1 - viewport.y0 || 1);
+    return { x: (PAD + nx * (1 - 2 * PAD)) * vbW, y: (PAD + ny * (1 - 2 * PAD)) * vbH };
+  };
   const edges = useMemo(() => {
     if (!adjacency) return [];
     const seen = new Set(), out = [];
@@ -60,7 +82,7 @@ export default function MiniMap({ view, compact = false }) {
           <span className="kanji faint" style={{ fontSize: 12 }}>戦域図</span>
         </div>
       )}
-      <svg viewBox={`0 0 ${vbW} ${vbH}`} style={{ width: "100%", height: "100%", maxHeight: "100%", background: "var(--ink)", border: "2px solid var(--line)", display: "block" }} preserveAspectRatio="xMidYMid meet">
+      <svg viewBox={`0 0 ${vbW} ${vbH}`} style={{ width: "100%", height: "100%", maxWidth: "100%", maxHeight: "100%", background: "var(--ink)", border: "2px solid var(--line)", display: "block", flex: "1 1 auto", minHeight: 0 }} preserveAspectRatio="xMidYMid meet">
         {/* grid wash */}
         <defs>
           <pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse">
@@ -71,14 +93,16 @@ export default function MiniMap({ view, compact = false }) {
 
         {/* edges */}
         {edges.map(([a, b], i) => {
-          const pa = place(pos[a]), pb = place(pos[b]);
+          if (local && viewport && !(focusSet.has(a) && focusSet.has(b))) return null;
+          const pa = placeL(pos[a]), pb = placeL(pos[b]);
           if (!pa || !pb) return null;
           return <line key={i} x1={pa.x} y1={pa.y} x2={pb.x} y2={pb.y} stroke="rgba(160,150,190,0.22)" strokeWidth="2" />;
         })}
 
         {/* rooms */}
         {rooms.map((r) => {
-          const p = place(pos[r]); if (!p) return null;
+          if (local && viewport && !focusSet.has(r)) return null;
+          const p = placeL(pos[r]); if (!p) return null;
           const isMe = r === myRoom, isTask = myTaskRooms.has(r), isTurret = turret.has(r), isO2 = refill.has(r);
           return (
             <g key={r} transform={`translate(${p.x},${p.y})`}>

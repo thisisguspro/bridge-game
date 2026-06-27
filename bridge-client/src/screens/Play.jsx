@@ -442,6 +442,27 @@ function Match({ view, roomId, conn, events, onLeave }) {
   const you = view.you || {};
   const room = you.room;
   const displayRoom = you.displayRoom || you.room;
+  const inCorridor = !!you.inCorridor;
+  // exact exclamation-mark position for a task (mirrors IsoStage + Controls)
+  const taskMarkerPos = (roomName, taskName) => {
+    const r = view.map?.geometry?.rooms?.[roomName];
+    if (!r) return null;
+    const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+    let hash = 0; const str = taskName || "";
+    for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash);
+    const offs = [{dx:-r.w/4,dy:-r.h/4},{dx:r.w/4,dy:r.h/4},{dx:-r.w/4,dy:r.h/4},{dx:r.w/4,dy:-r.h/4},{dx:0,dy:-r.h/3},{dx:0,dy:r.h/3}];
+    const o = offs[Math.abs(hash) % offs.length];
+    return { x: cx + o.dx, y: cy + o.dy };
+  };
+  const INTERACT_R = 130;
+  const distToMarker = (pos) => (!pos || you.x == null) ? Infinity : Math.hypot(you.x - pos.x, you.y - pos.y);
+  const atRoomCenter = (() => {
+    const r = view.map?.geometry?.rooms?.[room];
+    if (!r || you.x == null || inCorridor) return false;
+    return Math.hypot(you.x - (r.x + r.w/2), you.y - (r.y + r.h/2)) <= INTERACT_R;
+  })();
+  // tasks in this room you're actually standing on
+  const reachableTasks = inCorridor ? [] : (you.tasks || []).filter((t) => t.room === room && !t.done && distToMarker(taskMarkerPos(t.room, t.name)) <= INTERACT_R);
   const map = view.map || {};
   const here = (view.players || []).filter((p) => p.room === room && p.id !== you.id);
   const myTasks = (you.tasks || []).filter((t) => t.room === room && !t.done);
@@ -658,7 +679,7 @@ function Match({ view, roomId, conn, events, onLeave }) {
 
         {/* hint + vote opener + comms */}
         <div style={{ position: "absolute", top: 14, right: 18, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
-          <div className="impactf faint" style={{ fontSize: 10, letterSpacing: "0.12em", pointerEvents: "none", opacity: 0.7 }}>build R21</div>
+          <div className="impactf faint" style={{ fontSize: 10, letterSpacing: "0.12em", pointerEvents: "none", opacity: 0.7 }}>build R22</div>
           <div className="row gap-s">
             <button className="btn" style={{ fontSize: 13, padding: "8px 14px", borderColor: "var(--volt)" }} onClick={() => { comms.setOpen(true); }}>声 COMMS</button>
             <button className="btn btn-hot" style={{ fontSize: 13, padding: "8px 16px" }} onClick={() => { setVoteOpen(true); }}>
@@ -691,18 +712,22 @@ function Match({ view, roomId, conn, events, onLeave }) {
 
         {/* bottom floating action bar */}
         <div style={hudBar}>
-          {/* tasks here */}
-          {myTasks.length > 0 ? myTasks.map((t) => (
+          {/* tasks here — only when you're standing on the task's ❗ marker */}
+          {inCorridor ? (
+            <span className="faint impactf" style={{ fontSize: 11, alignSelf: "center" }}>IN CORRIDOR</span>
+          ) : reachableTasks.length > 0 ? reachableTasks.map((t) => (
             <button key={t.id} className="btn" style={{ fontSize: 12, padding: "10px 14px", textTransform: "none", borderColor: "var(--gold)" }} onClick={() => { conn.startTask(roomId, t.id); setActiveTask(t); sfx.click(); }}>
               ◆ {t.name}
             </button>
-          )) : <span className="faint impactf" style={{ fontSize: 11, alignSelf: "center" }}>NO TASKS HERE</span>}
+          )) : myTasks.length > 0
+            ? <span className="faint impactf" style={{ fontSize: 11, alignSelf: "center" }}>WALK ONTO THE ❗ MARKER</span>
+            : <span className="faint impactf" style={{ fontSize: 11, alignSelf: "center" }}>NO TASKS HERE</span>}
 
           <span style={{ width: 1, background: "var(--line)", alignSelf: "stretch", margin: "0 4px" }} />
 
-          {(map.refillRooms || []).includes(room) && <button className="btn" style={hudBtn} onClick={act(() => conn.refill(roomId))}>Refill O₂</button>}
-          {(map.repairRooms || []).includes(room) && <button className="btn" style={hudBtn} onClick={act(() => conn.repair(roomId))}>Repair</button>}
-          {room === "Airlock" && (
+          {!inCorridor && atRoomCenter && (map.refillRooms || []).includes(room) && <button className="btn" style={hudBtn} onClick={act(() => conn.refill(roomId))}>Refill O₂</button>}
+          {!inCorridor && atRoomCenter && (map.repairRooms || []).includes(room) && <button className="btn" style={hudBtn} onClick={act(() => conn.repair(roomId))}>Repair</button>}
+          {!inCorridor && room === "Airlock" && (
             <button className="btn" style={{ ...hudBtn, borderColor: "var(--volt)" }}
               onClick={act(() => conn.airlockDoor(roomId, !view.systems?.airlockDoorOpen))}>
               {view.systems?.airlockDoorOpen ? "🔒 Close Airlock Door" : "🚪 Open Airlock Door"}
@@ -713,7 +738,7 @@ function Match({ view, roomId, conn, events, onLeave }) {
               {view.systems?.airlockDoorOpen ? "Door is open — get back inside!" : "⚠ Door sealed — you're stuck outside!"}
             </span>
           )}
-          {(map.turretRooms || []).includes(room) && view.globalAttack && (
+          {!inCorridor && atRoomCenter && (map.turretRooms || []).includes(room) && view.globalAttack && (
             <button 
               className="btn btn-hot" 
               style={{ ...hudBtn, opacity: view.globalAttack.warning ? 0.6 : 1 }} 
@@ -749,12 +774,12 @@ function Match({ view, roomId, conn, events, onLeave }) {
           ))}
         </div>
 
-        {/* small corner minimap with a drop shadow so it reads over gameplay */}
-        <div style={{ position: "absolute", top: 14, right: 14, width: 150, height: 150, zIndex: 40,
+        {/* small corner minimap — zoomed to your room + nearby rooms */}
+        <div style={{ position: "absolute", top: 14, right: 14, width: 210, height: 170, zIndex: 40,
           filter: "drop-shadow(0 6px 14px rgba(0,0,0,0.7))", pointerEvents: "none" }}>
-          <MiniMap view={view} compact />
+          <MiniMap view={view} compact local />
         </div>
-        <div style={{ position: "absolute", top: 168, right: 14, zIndex: 40, fontSize: 10, color: "var(--dim)", fontFamily: "var(--impact)", letterSpacing: "0.1em", pointerEvents: "none" }}>
+        <div style={{ position: "absolute", top: 188, right: 14, zIndex: 40, fontSize: 10, color: "var(--dim)", fontFamily: "var(--impact)", letterSpacing: "0.1em", pointerEvents: "none" }}>
           [M] FULL MAP
         </div>
 

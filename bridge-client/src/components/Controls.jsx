@@ -272,7 +272,7 @@ export function TipBubble({ view, enabled }) {
   }, [enabled, tips.length]);
   if (!enabled || dismissed || !view || view.phase !== "active") return null;
   return (
-    <div style={{ position: "absolute", top: 90, right: 16, zIndex: 55, maxWidth: 360, width: "44%",
+    <div style={{ position: "absolute", bottom: 150, left: "50%", transform: "translateX(-50%)", zIndex: 55, maxWidth: 420, width: "min(90%, 420px)",
       display: "flex", alignItems: "center", gap: 14, padding: "12px 16px",
       background: "rgba(8,5,16,0.95)", border: "1px solid var(--volt)", backdropFilter: "blur(5px)",
       boxShadow: "0 8px 30px rgba(0,0,0,0.6)" }}>
