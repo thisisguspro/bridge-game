@@ -134,10 +134,10 @@ export const SOUND_EVENTS = {
 // World units are the same as the map geometry (a room is 120 units). At 180
 // units/sec a player crosses a room in well under a second and a corridor in ~1s.
 export const MOVE = {
-  SPEED_PER_SEC: 560,            // tuned for the room size so crossing feels right
+  SPEED_PER_SEC: 1250,           // scaled for the much bigger rooms
   ARRIVE_EPS: 8,                 // within this many units = arrived
   BOT_SPEED_MULT: 0.45,          // bots clearly slower than the player
-  CORRIDOR_WIDTH: 320,           // wide, forgiving walkable band between close rooms
+  CORRIDOR_WIDTH: 560,           // wide forgiving band, scaled to big rooms
 };
 
 // ---- Hull & combat ----

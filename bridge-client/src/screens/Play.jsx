@@ -291,6 +291,7 @@ function Match({ view, roomId, conn, events }) {
   const [escOpen, setEscOpen] = useState(false);
   const [activeTask, setActiveTask] = useState(null);
   const [throttleOpen, setThrottleOpen] = useState(false);
+  const [turretOpen, setTurretOpen] = useState(false);
   const [panelOpen, setPanelOpen] = useState(true);
   const comms = useComms({ view, roomId, conn, events });
   const emotes = useEmotes({ roomId, conn, events });
@@ -300,6 +301,7 @@ function Match({ view, roomId, conn, events }) {
     onOpenTask: (t) => setActiveTask(t),
     onOpenSabotage: () => setSabOpen(true),
     onOpenThrottle: () => setThrottleOpen(true),
+    onOpenTurret: () => setTurretOpen(true),
   });
   // Esc closes whatever interactable is open FIRST (minigame, throttle, wheels,
   // sabotage menu); only if nothing is open does it open the pause/options menu.
@@ -310,6 +312,7 @@ function Match({ view, roomId, conn, events }) {
       if (e.code === "Escape") {
         e.preventDefault();
         if (activeTask) { setActiveTask(null); return; }
+        if (turretOpen) { setTurretOpen(false); if (view.yourTurret) conn.leaveTurret(roomId); return; }
         if (throttleOpen) { setThrottleOpen(false); return; }
         if (sabOpen) { setSabOpen(false); return; }
         if (comms.open) { comms.setOpen(false); return; }
@@ -322,7 +325,7 @@ function Match({ view, roomId, conn, events }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [activeTask, throttleOpen, sabOpen, comms, emotes, voteOpen]);
+  }, [activeTask, throttleOpen, turretOpen, sabOpen, comms, emotes, voteOpen]);
   const you = view.you || {};
   const room = you.room;
   const map = view.map || {};
@@ -341,7 +344,13 @@ function Match({ view, roomId, conn, events }) {
     const nowWarn = !!view.attackWarning;
     if (nowWarn && !prevWarnRef.current) playSound("attack_warning");
     prevWarnRef.current = nowWarn;
+    // pop the turret fire panel automatically when a wave starts and you're manning one
+    if (nowAttack && view.yourTurret) setTurretOpen(true);
   }, [view.attack, view.attackWarning]);
+  // close the turret panel if you walk out of the turret room
+  useEffect(() => {
+    if (turretOpen && !(view.map?.turretRooms || []).includes(view.you?.room)) setTurretOpen(false);
+  }, [view.you?.room]); // eslint-disable-line
   const act = (fn) => (e) => { fn(); if (e) pop(e.clientX, e.clientY); };
 
   return (
@@ -459,7 +468,7 @@ function Match({ view, roomId, conn, events }) {
 
         {/* hint + vote opener + comms */}
         <div style={{ position: "absolute", top: 14, right: 18, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
-          <div className="impactf faint" style={{ fontSize: 10, letterSpacing: "0.12em", pointerEvents: "none" }}>WASD MOVE · E INTERACT · Z EMOTE · V VOTE <span style={{ color: "var(--gold)" }}>· build R10</span></div>
+          <div className="impactf faint" style={{ fontSize: 10, letterSpacing: "0.12em", pointerEvents: "none" }}>WASD MOVE · E INTERACT · Z EMOTE · V VOTE <span style={{ color: "var(--gold)" }}>· build R11</span></div>
           <div className="row gap-s">
             <button className="btn" style={{ fontSize: 13, padding: "8px 14px", borderColor: "var(--volt)" }} onClick={() => comms.setOpen(true)}>声 COMMS</button>
             <button className="btn" style={{ fontSize: 13, padding: "8px 14px", borderColor: "var(--gold)" }} onClick={() => emotes.setOpen(true)}>😊 EMOTE</button>
@@ -585,19 +594,19 @@ function Match({ view, roomId, conn, events }) {
           </div>
         )}
 
-        {/* TURRET controls: appear when you're standing in a turret room. Man it,
-            then fire at the swarm. One pilot per turret (server-enforced). */}
-        {(map.turretRooms || []).includes(room) && !onEnergy && (
-          <div style={{ position: "absolute", top: 210, left: "50%", transform: "translateX(-50%)", zIndex: 70,
+        {/* TURRET: man it by walking into a turret room and pressing E (like tasks).
+            The fire panel is a compact modal, not a full-screen takeover. */}
+        {turretOpen && (map.turretRooms || []).includes(room) && !onEnergy && (
+          <div style={{ position: "absolute", bottom: 90, left: "50%", transform: "translateX(-50%)", zIndex: 70,
             display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "12px 18px",
-            background: "rgba(13,11,20,0.94)", border: "2px solid var(--volt)" }}>
+            background: "rgba(13,11,20,0.96)", border: "2px solid var(--volt)", minWidth: 220 }}>
             <div className="impactf" style={{ fontSize: 12, color: "var(--volt)" }}>{room}{view.yourTurret === room ? " · MANNED" : ""}</div>
             {view.yourTurret === room ? (
               <>
                 {view.attack
                   ? <TurretGame planesDowned={view.planesDowned} onHit={() => conn.shootPlane(roomId)} />
                   : <div className="faint" style={{ fontSize: 12, padding: "8px 0" }}>No incoming wave. Stay manned — ships will come.</div>}
-                <button className="btn btn-ghost" style={{ fontSize: 11, padding: "4px 10px" }} onClick={() => conn.leaveTurret(roomId)}>Leave turret</button>
+                <button className="btn btn-ghost" style={{ fontSize: 11, padding: "4px 10px" }} onClick={() => { conn.leaveTurret(roomId); setTurretOpen(false); }}>Leave turret (Esc)</button>
               </>
             ) : (
               <button className="btn" style={{ fontSize: 14, padding: "8px 18px", borderColor: "var(--volt)" }}
