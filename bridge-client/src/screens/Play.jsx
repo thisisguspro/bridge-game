@@ -650,18 +650,20 @@ function Match({ view, roomId, conn, events }) {
           </div>
         )}
 
-        {/* bottom floating action bar — slim. Tasks are now in-world ('!' markers,
-            press E). This bar only shows contextual actions for where you are. */}
-        {((map.refillRooms || []).includes(room) || (map.repairRooms || []).includes(room) || isImpostor || here.length > 0) && (
+        {/* bottom floating action bar — slim. Tasks are in-world ('!' markers, E).
+            Same-room pilots are visible in the world already, so we only surface
+            them here for an IMPOSTOR (who needs the Pull action), capped so the bar
+            never towers. Crew just see station actions. */}
+        {((map.refillRooms || []).includes(room) || (map.repairRooms || []).includes(room) || isImpostor) && (
           <div style={hudBar}>
             {(map.refillRooms || []).includes(room) && <button className="btn" style={hudBtn} onClick={act(() => conn.refill(roomId))}>Refill O₂</button>}
             {(map.repairRooms || []).includes(room) && <button className="btn" style={hudBtn} onClick={act(() => conn.repair(roomId))}>Repair</button>}
             {isImpostor && <button className="btn" style={{ ...hudBtn, borderColor: "var(--violet)" }} onClick={() => setSabOpen(true)}>妨害 Sabotage</button>}
-            {here.map((p) => (
+            {isImpostor && here.filter((p) => p.plane === you.plane).slice(0, 4).map((p) => (
               <span key={p.id} className="row gap-s" style={{ padding: "4px 8px", border: `1px solid ${p.idColor?.hex || "var(--line)"}`, alignItems: "center" }}>
                 <span style={{ ...crewDot, width: 10, height: 10, background: p.idColor?.hex || "var(--dim)" }} />
                 <span style={{ fontSize: 12, fontWeight: 700 }}>{p.name}</span>
-                {isImpostor && p.plane === you.plane && <button className="btn" style={miniBtn} onClick={act(() => conn.detachCable(roomId, p.id))}>Pull</button>}
+                <button className="btn" style={miniBtn} onClick={act(() => conn.detachCable(roomId, p.id))}>Pull</button>
               </span>
             ))}
           </div>
@@ -905,5 +907,5 @@ const hereCard = { display: "flex", alignItems: "center", gap: 8, padding: "8px 
 const miniBtn = { fontSize: 11, padding: "6px 12px" };
 const navGrid = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 };
 const navBtn = { fontSize: 11, padding: "9px 8px", textTransform: "none" };
-const hudBar = { position: "absolute", left: 16, right: 16, bottom: 16, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", padding: "10px 12px", background: "rgba(13,11,20,0.82)", border: "2px solid var(--line)", backdropFilter: "blur(4px)" };
+const hudBar = { position: "absolute", left: 16, right: 16, bottom: 16, display: "flex", gap: 8, flexWrap: "nowrap", overflowX: "auto", alignItems: "center", maxHeight: 56, padding: "10px 12px", background: "rgba(13,11,20,0.82)", border: "2px solid var(--line)", backdropFilter: "blur(4px)" };
 const hudBtn = { fontSize: 12, padding: "9px 13px", textTransform: "none" };

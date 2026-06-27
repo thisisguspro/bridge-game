@@ -10,7 +10,7 @@ import { EmoteBubble } from "./Emotes.jsx";
 // motion looks smooth.
 //
 // Iso projection: screen = ( (x - y) * COS, (x + y) * SIN ) — classic 2:1 iso.
-const ISO = { cos: 0.86, sin: 0.5, scale: 1.7 };
+const ISO = { cos: 0.86, sin: 0.5, scale: 2.1 };
 function toScreen(wx, wy) { return { sx: (wx - wy) * ISO.cos * ISO.scale, sy: (wx + wy) * ISO.sin * ISO.scale }; }
 
 // ---- Room art image cache ----
@@ -155,47 +155,79 @@ export default function IsoStage({ view, emoteBubbles = {} }) {
           ctx.strokeStyle = "rgba(255,45,77,0.8)"; ctx.lineWidth = 2.5; ctx.stroke();
         }
       } else {
-        // Placeholder tech-panel floor (until room art PNGs are added): a dark
-        // base, tiled panel seams, an inset frame, and corner brackets — so the
-        // floor reads as a real ship deck rather than a flat diamond.
-        const baseFill = here ? "#221b30" : "#16121f";
-        ctx.fillStyle = baseFill; ctx.fill();
+        // Rich placeholder ship-deck floor (until room art PNGs are added):
+        // checkerboard deck plating with recessed seams (shadow+highlight edges),
+        // hazard chevrons along one edge, corner rivets, and a center service
+        // hatch — so it reads as a real deck rather than a flat diamond.
+        ctx.fillStyle = here ? "#241d33" : "#17131f"; ctx.fill();
         ctx.save();
         ctx.clip();
-        // panel seams (larger tiles than before, brighter, with a faint highlight)
-        const STEP = 70;
-        for (let gx = 0; gx <= r.w; gx += STEP) {
+        const TILE = 56;
+        // helper to convert a world rect corner set to screen + draw a filled iso quad
+        const quad = (x0, y0, x1, y1, fill) => {
+          const a = toScreen(x0, y0), b = toScreen(x1, y0), c2 = toScreen(x1, y1), d = toScreen(x0, y1);
+          ctx.beginPath();
+          ctx.moveTo(a.sx + ox, a.sy + oy); ctx.lineTo(b.sx + ox, b.sy + oy);
+          ctx.lineTo(c2.sx + ox, c2.sy + oy); ctx.lineTo(d.sx + ox, d.sy + oy); ctx.closePath();
+          ctx.fillStyle = fill; ctx.fill();
+        };
+        // checkerboard plating
+        let row = 0;
+        for (let gy = 0; gy < r.h; gy += TILE) {
+          let col = 0;
+          for (let gx = 0; gx < r.w; gx += TILE) {
+            const dark = (row + col) % 2 === 0;
+            const w = Math.min(TILE, r.w - gx), h = Math.min(TILE, r.h - gy);
+            quad(r.x + gx, r.y + gy, r.x + gx + w, r.y + gy + h,
+              dark ? (here ? "rgba(255,255,255,0.018)" : "rgba(255,255,255,0.012)")
+                   : (here ? "rgba(0,0,0,0.16)" : "rgba(0,0,0,0.22)"));
+            col++;
+          }
+          row++;
+        }
+        // recessed seams: a dark line + a 1px highlight to fake bevel
+        for (let gx = 0; gx <= r.w; gx += TILE) {
           const p0 = toScreen(r.x + gx, r.y), p1 = toScreen(r.x + gx, r.y + r.h);
-          ctx.strokeStyle = "rgba(0,0,0,0.35)"; ctx.lineWidth = 2;
+          ctx.strokeStyle = "rgba(0,0,0,0.4)"; ctx.lineWidth = 2;
           ctx.beginPath(); ctx.moveTo(p0.sx + ox, p0.sy + oy); ctx.lineTo(p1.sx + ox, p1.sy + oy); ctx.stroke();
-          ctx.strokeStyle = here ? "rgba(255,120,140,0.07)" : "rgba(150,140,180,0.07)"; ctx.lineWidth = 1;
-          ctx.beginPath(); ctx.moveTo(p0.sx + ox + 1, p0.sy + oy); ctx.lineTo(p1.sx + ox + 1, p1.sy + oy); ctx.stroke();
+          ctx.strokeStyle = "rgba(180,170,210,0.05)"; ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.moveTo(p0.sx + ox + 1.5, p0.sy + oy + 1); ctx.lineTo(p1.sx + ox + 1.5, p1.sy + oy + 1); ctx.stroke();
         }
-        for (let gy = 0; gy <= r.h; gy += STEP) {
+        for (let gy = 0; gy <= r.h; gy += TILE) {
           const p0 = toScreen(r.x, r.y + gy), p1 = toScreen(r.x + r.w, r.y + gy);
-          ctx.strokeStyle = "rgba(0,0,0,0.35)"; ctx.lineWidth = 2;
+          ctx.strokeStyle = "rgba(0,0,0,0.4)"; ctx.lineWidth = 2;
           ctx.beginPath(); ctx.moveTo(p0.sx + ox, p0.sy + oy); ctx.lineTo(p1.sx + ox, p1.sy + oy); ctx.stroke();
-          ctx.strokeStyle = here ? "rgba(255,120,140,0.07)" : "rgba(150,140,180,0.07)"; ctx.lineWidth = 1;
-          ctx.beginPath(); ctx.moveTo(p0.sx + ox, p0.sy + oy + 1); ctx.lineTo(p1.sx + ox, p1.sy + oy + 1); ctx.stroke();
+          ctx.strokeStyle = "rgba(180,170,210,0.05)"; ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.moveTo(p0.sx + ox, p0.sy + oy + 1.5); ctx.lineTo(p1.sx + ox, p1.sy + oy + 1.5); ctx.stroke();
         }
-        // inset frame for depth
-        const inset = 16;
-        const e = [toScreen(r.x + inset, r.y + inset), toScreen(r.x + r.w - inset, r.y + inset),
-                   toScreen(r.x + r.w - inset, r.y + r.h - inset), toScreen(r.x + inset, r.y + r.h - inset)];
-        ctx.strokeStyle = here ? "rgba(255,45,77,0.25)" : "rgba(110,100,135,0.22)";
-        ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.moveTo(e[0].sx + ox, e[0].sy + oy);
-        for (let i = 1; i < 4; i++) ctx.lineTo(e[i].sx + ox, e[i].sy + oy); ctx.closePath(); ctx.stroke();
-        // center hazard ring accent
+        // hazard chevrons along the top-left edge (a warning stripe band)
+        const bandW = 26;
+        for (let s = 0; s < r.h; s += 26) {
+          const q0 = toScreen(r.x, r.y + s), q1 = toScreen(r.x + bandW, r.y + s);
+          const q2 = toScreen(r.x + bandW, r.y + s + 13), q3 = toScreen(r.x, r.y + s + 13);
+          ctx.beginPath(); ctx.moveTo(q0.sx + ox, q0.sy + oy); ctx.lineTo(q1.sx + ox, q1.sy + oy);
+          ctx.lineTo(q2.sx + ox, q2.sy + oy); ctx.lineTo(q3.sx + ox, q3.sy + oy); ctx.closePath();
+          ctx.fillStyle = (Math.floor(s / 26) % 2) ? "rgba(255,200,61,0.10)" : "rgba(0,0,0,0.18)"; ctx.fill();
+        }
+        // center service hatch (two concentric iso ellipses)
         const cc = toScreen(r.x + r.w / 2, r.y + r.h / 2);
-        ctx.strokeStyle = here ? "rgba(255,45,77,0.12)" : "rgba(110,100,135,0.1)";
-        ctx.lineWidth = 6; ctx.beginPath();
-        ctx.ellipse(cc.sx + ox, cc.sy + oy, r.w * ISO.cos * ISO.scale * 0.28, r.h * ISO.sin * ISO.scale * 0.28, 0, 0, Math.PI * 2); ctx.stroke();
+        const rx = r.w * ISO.cos * ISO.scale * 0.22, ry = r.h * ISO.sin * ISO.scale * 0.22;
+        ctx.strokeStyle = here ? "rgba(255,45,77,0.18)" : "rgba(120,110,150,0.14)"; ctx.lineWidth = 4;
+        ctx.beginPath(); ctx.ellipse(cc.sx + ox, cc.sy + oy, rx, ry, 0, 0, Math.PI * 2); ctx.stroke();
+        ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.ellipse(cc.sx + ox, cc.sy + oy, rx * 0.6, ry * 0.6, 0, 0, Math.PI * 2); ctx.stroke();
+        // corner rivets
+        const rivet = (fx, fy) => {
+          const p = toScreen(r.x + fx * r.w, r.y + fy * r.h);
+          ctx.fillStyle = "rgba(180,170,210,0.18)";
+          ctx.beginPath(); ctx.arc(p.sx + ox, p.sy + oy, 2.2, 0, Math.PI * 2); ctx.fill();
+        };
+        [[0.08, 0.12], [0.92, 0.12], [0.08, 0.88], [0.92, 0.88]].forEach(([fx, fy]) => rivet(fx, fy));
         ctx.restore();
-        // room outline (corner-bracketed look via thicker outline)
+        // room outline
         ctx.beginPath(); ctx.moveTo(c[0].x, c[0].y);
         for (let i = 1; i < 4; i++) ctx.lineTo(c[i].x, c[i].y); ctx.closePath();
-        ctx.strokeStyle = here ? "rgba(255,45,77,0.8)" : "rgba(110,100,135,0.55)";
+        ctx.strokeStyle = here ? "rgba(255,45,77,0.8)" : "rgba(120,110,150,0.55)";
         ctx.lineWidth = here ? 3 : 2; ctx.stroke();
         ctx.restore();
       }
