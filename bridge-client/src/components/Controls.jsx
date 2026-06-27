@@ -72,8 +72,12 @@ export function useControls({ view, roomId, conn, onOpenTask, onOpenSabotage, on
         if (held.current.has("moveRight")) dx += 1;
         if (dx || dy) {
           // iso world: screen-up is world (-x,-y); map intuitive WASD to world axes
-          const wx = v.you.x + (dx + dy) * 30;
-          const wy = v.you.y + (dy - dx) * 30;
+          // Project the destination well ahead in the held direction so the player
+          // glides at full engine speed (a short lookahead used to throttle them
+          // far below the bots — this is the real "players feel slow" fix).
+          const LOOK = 260;
+          const wx = v.you.x + (dx + dy) * LOOK;
+          const wy = v.you.y + (dy - dx) * LOOK;
           conn.setDestination(roomId, wx, wy);
         }
       }
@@ -88,7 +92,7 @@ export function useControls({ view, roomId, conn, onOpenTask, onOpenSabotage, on
 }
 
 // --- action resolvers (mirror what the HUD buttons do) ---
-const INTERACT_RANGE = 70; // world units — how close you must be to a "!" marker
+const INTERACT_RANGE = 150; // world units — how close you must be to a "!" marker (scaled for big rooms)
 
 function nearestTask(v) {
   const you = v.you || {};

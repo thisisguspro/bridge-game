@@ -10,7 +10,7 @@ import { EmoteBubble } from "./Emotes.jsx";
 // motion looks smooth.
 //
 // Iso projection: screen = ( (x - y) * COS, (x + y) * SIN ) — classic 2:1 iso.
-const ISO = { cos: 0.86, sin: 0.5, scale: 2.1 };
+const ISO = { cos: 0.86, sin: 0.5, scale: 0.85 };
 function toScreen(wx, wy) { return { sx: (wx - wy) * ISO.cos * ISO.scale, sy: (wx + wy) * ISO.sin * ISO.scale }; }
 
 // ---- Room art image cache ----
@@ -296,7 +296,7 @@ export default function IsoStage({ view, emoteBubbles = {} }) {
           you're close enough to interact. */}
       {(view.you?.tasks || []).filter((t) => !t.done && t.x != null && t.room === view.you?.room).map((t) => {
         const s = toScreen(t.x, t.y);
-        const near = view.you?.x != null && Math.hypot(t.x - view.you.x, t.y - view.you.y) <= 70;
+        const near = view.you?.x != null && Math.hypot(t.x - view.you.x, t.y - view.you.y) <= 150;
         return (
           <div key={t.id} style={{ position: "absolute", left: s.sx + ox, top: s.sy + oy, transform: "translate(-50%,-100%)", pointerEvents: "none", textAlign: "center" }}>
             <div style={{ fontSize: near ? 30 : 24, lineHeight: 1, color: "#ffd24d", fontWeight: 900,

@@ -18,8 +18,8 @@
 
 import { makeRng } from "./rng.js";
 
-const ROOM_SIZE = 280;   // scaled up ~2.3x so rooms dwarf the character sprites
-const CORRIDOR_LEN = 180;
+const ROOM_SIZE = 720;   // large rooms so the (fixed-size) character sprite reads as small inside
+const CORRIDOR_LEN = 360;
 
 // Functional room types that can appear in the random middle. Helm/Reactor/Airlock
 // are placed specially, so they're not in this pool. roles drive refill/repair.

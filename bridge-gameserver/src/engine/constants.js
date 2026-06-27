@@ -134,9 +134,9 @@ export const SOUND_EVENTS = {
 // World units are the same as the map geometry (a room is 120 units). At 180
 // units/sec a player crosses a room in well under a second and a corridor in ~1s.
 export const MOVE = {
-  SPEED_PER_SEC: 400,            // base glide speed (scaled for the larger map)
-  ARRIVE_EPS: 6,                 // within this many units = arrived
-  BOT_SPEED_MULT: 0.62,          // bots move at ~human felt-speed (they path far targets; humans nudge short)
+  SPEED_PER_SEC: 900,            // base glide speed (scaled for the much larger rooms)
+  ARRIVE_EPS: 8,                 // within this many units = arrived
+  BOT_SPEED_MULT: 0.42,          // bots move MUCH slower than their pathing would allow — clearly below player pace
 };
 
 // ---- Hull & combat ----
