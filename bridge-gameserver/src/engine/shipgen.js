@@ -18,8 +18,8 @@
 
 import { makeRng } from "./rng.js";
 
-const ROOM_SIZE = 720;   // large rooms so the (fixed-size) character sprite reads as small inside
-const CORRIDOR_LEN = 360;
+const ROOM_SIZE = 460;   // fills the view at the current zoom; big enough that the sprite reads small, not a barren void
+const CORRIDOR_LEN = 240;
 
 // Functional room types that can appear in the random middle. Helm/Reactor/Airlock
 // are placed specially, so they're not in this pool. roles drive refill/repair.
@@ -86,37 +86,35 @@ export function generateShip({ players = 8, seed = null, id = null, name = null 
   // shuffle attach order so the ship differs each match
   for (let i = attach.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [attach[i], attach[j]] = [attach[j], attach[i]]; }
 
-  // number of corridor segments: roughly half the attached rooms (two rooms per
-  // corridor node, one on each side), min 2 so the spine has length.
-  const corridorCount = Math.max(2, Math.ceil(attach.length / 2));
-  const corridors = [];
-  for (let i = 0; i < corridorCount; i++) corridors.push(`Corridor ${i + 1}`);
-
-  // ----- build adjacency -----
+  // ----- build adjacency (two-row ladder; no separate corridor-node rooms) -----
+  // Layout: Reactor (left cap) — [col0 top/bottom] — [col1 t/b] — ... — Helm (right cap).
+  // We link: reactor->leftmost column rooms, helm->rightmost column rooms, each
+  // room to its horizontal neighbor in the same row, and top<->bottom within a column.
   const adj = {};
-  const allRooms = [spawn, ...corridors, ...attach.map((a) => a.name), reactor];
+  const allRooms = [spawn, ...attach.map((a) => a.name), reactor];
   for (const r of allRooms) adj[r] = [];
-  const link = (a, b) => { if (a !== b && !adj[a].includes(b)) { adj[a].push(b); adj[b].push(a); } };
+  const link = (a, b) => { if (a && b && a !== b && !adj[a].includes(b)) { adj[a].push(b); adj[b].push(a); } };
 
-  // spine: Helm - C1 - C2 - ... - Cn - Reactor  (Helm & Reactor single-entrance)
-  link(spawn, corridors[0]);
-  for (let i = 0; i < corridors.length - 1; i++) link(corridors[i], corridors[i + 1]);
-  link(corridors[corridors.length - 1], reactor);
+  const middle = attach.map((a) => a.name);
+  const cols = Math.max(1, Math.ceil(middle.length / 2));
+  // grid[row][col] = room name
+  const grid = [[], []];
+  middle.forEach((name, i) => { const row = i < cols ? 0 : 1; grid[row][i % cols] = name; });
 
-  // attach rooms to corridor nodes; give each TWO entrances by linking it to two
-  // adjacent corridor nodes when possible (pass-through), else to one corridor +
-  // the next attached sibling so it still has two doors.
-  const entrances = {}; // room -> array of neighbor room names that are its doors
-  attach.forEach((room, idx) => {
-    const cIdx = idx % corridors.length;
-    const cA = corridors[cIdx];
-    const cB = corridors[(cIdx + 1) % corridors.length];
-    link(room.name, cA);
-    if (cB !== cA) link(room.name, cB);
-    entrances[room.name] = [...adj[room.name]];
-  });
-  entrances[spawn] = [...adj[spawn]];        // single entrance
-  entrances[reactor] = [...adj[reactor]];    // single entrance
+  for (let c = 0; c < cols; c++) {
+    const top = grid[0][c], bot = grid[1][c];
+    // vertical link within a column (the ladder rungs)
+    if (top && bot) link(top, bot);
+    // horizontal links along each row
+    if (c > 0) { link(grid[0][c - 1], grid[0][c]); link(grid[1][c - 1], grid[1][c]); }
+  }
+  // end-caps connect to the nearest column (both rows)
+  link(reactor, grid[0][0]); link(reactor, grid[1][0]);
+  link(spawn, grid[0][cols - 1]); link(spawn, grid[1][cols - 1]);
+
+  const corridors = []; // no node-rooms anymore; corridors are derived from adj pairs
+  const entrances = {};
+  for (const r of allRooms) entrances[r] = [...adj[r]];
 
   // ----- role room lists -----
   const refillRooms = attach.filter((a) => a.roles.includes("refill")).map((a) => a.name);
@@ -157,36 +155,41 @@ export function generateShip({ players = 8, seed = null, id = null, name = null 
   };
 }
 
-// Place rooms on a world grid. Spine runs left->right (Helm at far left, Reactor
-// far right). Corridor nodes sit on the centerline; attached rooms alternate
-// above/below their corridor. Returns {worldW, worldH, rooms:{name:{x,y,w,h}}, corridors:[[a,b]]}.
+// Place rooms to match the intended ship shape (per design sketch):
+//   - Reactor is a big end-cap on the far LEFT, vertically centered.
+//   - Helm is a big end-cap on the far RIGHT, vertically centered.
+//   - All functional rooms sit BETWEEN them in two rows (top + bottom),
+//     spread across evenly-spaced columns — like a ladder.
+//   - Corridors are thin connectors (drawn as bands), not rooms.
+// Returns {worldW, worldH, rooms:{name:{x,y,w,h}}, corridors:[[a,b]]}.
 function layoutShip(spawn, corridors, attach, reactor, adj) {
   const rects = {};
-  const gapX = ROOM_SIZE + CORRIDOR_LEN;
-  const centerY = 0;
-  let x = 0;
-  // Helm at left
-  rects[spawn] = { x, y: centerY };
-  x += gapX;
-  // corridor nodes along the centerline
-  corridors.forEach((c) => { rects[c] = { x, y: centerY }; x += gapX; });
-  // Reactor at the far right end
-  rects[reactor] = { x, y: centerY };
+  const colGap = ROOM_SIZE + CORRIDOR_LEN;   // horizontal spacing between columns
+  const rowGap = ROOM_SIZE + CORRIDOR_LEN;   // vertical gap between the two rows
 
-  // attached rooms: above/below the corridor they're linked to
-  const sideCounter = {};
-  attach.forEach((room) => {
-    // find a corridor neighbor to anchor under
-    const corr = (adj[room.name] || []).find((n) => n.startsWith("Corridor")) || corridors[0];
-    const base = rects[corr] || { x: gapX, y: centerY };
-    const n = (sideCounter[corr] = (sideCounter[corr] || 0) + 1);
-    const above = n % 2 === 1;
-    const tier = Math.ceil(n / 2);
-    rects[room.name] = { x: base.x, y: centerY + (above ? -1 : 1) * tier * (ROOM_SIZE + CORRIDOR_LEN) };
+  // The functional rooms are everything except the two end-caps. (Corridor nodes
+  // from the old scheme are treated as functional cells too, so the count works.)
+  const middle = attach.map((r) => r.name);
+  const cols = Math.max(1, Math.ceil(middle.length / 2));
+  const topY = -rowGap / 2 - ROOM_SIZE / 2;  // top row center band
+  const botY = rowGap / 2 + ROOM_SIZE / 2;
+
+  // columns x-positions start after the reactor end-cap
+  const firstColX = colGap;
+  // place middle rooms: fill top row left->right, then bottom row
+  middle.forEach((name, i) => {
+    const col = i % cols;
+    const row = i < cols ? 0 : 1; // first `cols` go top, rest bottom
+    rects[name] = { x: firstColX + col * colGap, y: row === 0 ? topY : botY };
   });
 
+  // end-caps, vertically centered on the ladder
+  const lastColX = firstColX + (cols - 1) * colGap;
+  rects[reactor] = { x: 0, y: 0 - ROOM_SIZE / 2 + 0 };          // far left, centered
+  rects[spawn]   = { x: lastColX + colGap, y: 0 - ROOM_SIZE / 2 }; // far right (Helm)
+
   // normalize to positive coords with a margin
-  const margin = ROOM_SIZE;
+  const margin = ROOM_SIZE * 0.6;
   const xs = Object.values(rects).map((r) => r.x), ys = Object.values(rects).map((r) => r.y);
   const minX = Math.min(...xs), minY = Math.min(...ys), maxX = Math.max(...xs), maxY = Math.max(...ys);
   const out = {};
@@ -199,6 +202,7 @@ function layoutShip(spawn, corridors, attach, reactor, adj) {
   // corridors list = unique adjacency pairs (client draws halls between doors)
   const seen = new Set(), corr = [];
   for (const a of Object.keys(adj)) for (const b of adj[a]) {
+    if (!out[a] || !out[b]) continue;
     const key = [a, b].sort().join("|"); if (seen.has(key)) continue; seen.add(key); corr.push([a, b]);
   }
   return { worldW, worldH, rooms: out, corridors: corr };

@@ -75,7 +75,7 @@ export function useControls({ view, roomId, conn, onOpenTask, onOpenSabotage, on
           // Project the destination well ahead in the held direction so the player
           // glides at full engine speed (a short lookahead used to throttle them
           // far below the bots — this is the real "players feel slow" fix).
-          const LOOK = 900;
+          const LOOK = 560;
           const wx = v.you.x + (dx + dy) * LOOK;
           const wy = v.you.y + (dy - dx) * LOOK;
           conn.setDestination(roomId, wx, wy);

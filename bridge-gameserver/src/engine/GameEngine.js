@@ -154,11 +154,20 @@ export class GameEngine {
   }
 
   // Center of a room in world units (or null coords if the map has no geometry).
-  _spawnXY(room) {
+  _spawnXY(room, seatIndex = null) {
     const r = this.map.geometry?.rooms?.[room];
     if (!r) return { x: null, y: null, tx: null, ty: null };
     let cx = r.x + r.w / 2, cy = r.y + r.h / 2;
-    // nudge out of any furniture blocker at the room center
+    // If a seat index is given, scatter players around the room so they don't
+    // stack on the exact same pixel at spawn. Spiral/ring placement scaled to room.
+    if (seatIndex != null && seatIndex > 0) {
+      const ring = Math.floor((seatIndex - 1) / 8) + 1;
+      const slot = (seatIndex - 1) % 8;
+      const ang = (slot / 8) * Math.PI * 2;
+      const rad = Math.min(r.w, r.h) * 0.26 * ring;
+      cx += Math.cos(ang) * rad;
+      cy += Math.sin(ang) * rad;
+    }
     const rects = blockersForRoom(room, r);
     const free = nearestFree(cx, cy, rects);
     return { x: free.x, y: free.y, tx: free.x, ty: free.y };
@@ -310,6 +319,12 @@ export class GameEngine {
       p.tasks = this._assignTasks(ROOM_TASKS);
       if (impostors.has(id)) this.cooldowns[id] = { cable: this._eff("cableCooldown") };
     }
+    // Scatter everyone around the spawn room so they don't stack on one pixel.
+    ids.forEach((id, i) => {
+      const p = this.players.get(id);
+      const pos = this._spawnXY(this.map.spawnRoom, i + 1);
+      p.x = pos.x; p.y = pos.y; p.tx = pos.tx; p.ty = pos.ty; p.room = this.map.spawnRoom;
+    });
     const crewIds = ids.filter((id) => this.players.get(id).role === ROLE.CREW);
     this.commanderId = shuffle(crewIds, this.rng)[0];
 
@@ -552,6 +567,7 @@ export class GameEngine {
       // (which naturally caps their pace); bots target far room-centers and would
       // otherwise glide faster, so we damp them slightly to match the felt speed.
       const speed = p.isBot ? baseSpeed * MOVE.BOT_SPEED_MULT : baseSpeed;
+      const prevX = p.x, prevY = p.y;
       const dx = p.tx - p.x, dy = p.ty - p.y;
       const dist = Math.hypot(dx, dy);
       let nx, ny;
@@ -565,9 +581,50 @@ export class GameEngine {
         if (rects.length) { const r = resolveMove(p.x, p.y, nx, ny, rects); nx = r.x; ny = r.y; }
       }
       p.x = nx; p.y = ny;
+      // Keep the player on the walkable floor (inside a room or a corridor band).
+      // If the new point is in the void, slide back to the nearest walkable point
+      // so you can't walk off the ship.
+      if (!p.outside && !this._isWalkable(p.x, p.y)) {
+        const safe = this._nearestWalkable(p.x, p.y, prevX, prevY);
+        p.x = safe.x; p.y = safe.y;
+      }
       const r = this._roomAt(p.x, p.y);
       if (r) p.room = r;
     }
+  }
+
+  // Is a world point on the walkable floor? True inside any room rect, or within
+  // a corridor band connecting two rooms' centers.
+  _isWalkable(x, y) {
+    const g = this.map.geometry; if (!g) return true;
+    for (const r of Object.values(g.rooms)) {
+      if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) return true;
+    }
+    const HALF = (MOVE.CORRIDOR_WIDTH || 90) / 2;
+    for (const [a, b] of g.corridors) {
+      const ra = g.rooms[a], rb = g.rooms[b]; if (!ra || !rb) continue;
+      const ax = ra.x + ra.w / 2, ay = ra.y + ra.h / 2;
+      const bx = rb.x + rb.w / 2, by = rb.y + rb.h / 2;
+      if (this._distToSegment(x, y, ax, ay, bx, by) <= HALF) return true;
+    }
+    return false;
+  }
+  _distToSegment(px, py, ax, ay, bx, by) {
+    const dx = bx - ax, dy = by - ay;
+    const len2 = dx * dx + dy * dy || 1;
+    let t = ((px - ax) * dx + (py - ay) * dy) / len2;
+    t = Math.max(0, Math.min(1, t));
+    const cx = ax + t * dx, cy = ay + t * dy;
+    return Math.hypot(px - cx, py - cy);
+  }
+  // Walk back from (x,y) toward the previous (safe) point until we're on floor.
+  _nearestWalkable(x, y, fromX, fromY) {
+    if (fromX == null) return { x, y };
+    for (let t = 0.1; t <= 1; t += 0.1) {
+      const cx = x + (fromX - x) * t, cy = y + (fromY - y) * t;
+      if (this._isWalkable(cx, cy)) return { x: cx, y: cy };
+    }
+    return { x: fromX, y: fromY };
   }
 
   // All furniture blockers in world space, keyed by room (cached). For the client
