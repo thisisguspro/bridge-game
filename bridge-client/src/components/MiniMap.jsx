@@ -82,14 +82,14 @@ export default function MiniMap({ view, compact = false, local = false }) {
           <span className="kanji faint" style={{ fontSize: 12 }}>戦域図</span>
         </div>
       )}
-      <svg viewBox={`0 0 ${vbW} ${vbH}`} style={{ width: "100%", height: "100%", maxWidth: "100%", maxHeight: "100%", background: "var(--ink)", border: "2px solid var(--line)", display: "block", flex: "1 1 auto", minHeight: 0 }} preserveAspectRatio="xMidYMid meet">
+      <svg viewBox={`0 0 ${vbW} ${vbH}`} style={{ width: "100%", height: "100%", maxWidth: "100%", maxHeight: "100%", background: compact ? "transparent" : "var(--ink)", border: compact ? "none" : "2px solid var(--line)", display: "block", flex: "1 1 auto", minHeight: 0 }} preserveAspectRatio="xMidYMid meet">
         {/* grid wash */}
         <defs>
           <pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse">
             <path d="M20 0H0V20" fill="none" stroke="rgba(120,110,150,0.08)" strokeWidth="1" />
           </pattern>
         </defs>
-        <rect x="0" y="0" width={vbW} height={vbH} fill="url(#grid)" />
+        {!compact && <rect x="0" y="0" width={vbW} height={vbH} fill="url(#grid)" />}
 
         {/* edges */}
         {edges.map(([a, b], i) => {

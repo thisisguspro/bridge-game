@@ -677,9 +677,9 @@ function Match({ view, roomId, conn, events, onLeave }) {
           {onEnergy && <style>{`@keyframes ghostFloat { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }`}</style>}
         </div>
 
-        {/* hint + vote opener + comms */}
-        <div style={{ position: "absolute", top: 14, right: 18, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
-          <div className="impactf faint" style={{ fontSize: 10, letterSpacing: "0.12em", pointerEvents: "none", opacity: 0.7 }}>build R22</div>
+        {/* vote opener + comms — kept left of the corner minimap so they don't overlap */}
+        <div style={{ position: "absolute", top: 14, right: 235, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
+          <div className="impactf faint" style={{ fontSize: 10, letterSpacing: "0.12em", pointerEvents: "none", opacity: 0.7 }}>build R23</div>
           <div className="row gap-s">
             <button className="btn" style={{ fontSize: 13, padding: "8px 14px", borderColor: "var(--volt)" }} onClick={() => { comms.setOpen(true); }}>声 COMMS</button>
             <button className="btn btn-hot" style={{ fontSize: 13, padding: "8px 16px" }} onClick={() => { setVoteOpen(true); }}>
@@ -785,9 +785,9 @@ function Match({ view, roomId, conn, events, onLeave }) {
 
         {/* M: full detailed map overlay — sizes to the viewport so it always fits */}
         {mapOpen && (
-          <div style={{ position: "absolute", inset: 0, zIndex: 120, display: "grid", placeItems: "center", padding: "4vmin", background: "rgba(5,4,9,0.78)", backdropFilter: "blur(3px)" }}
+          <div style={{ position: "absolute", inset: 0, zIndex: 120, display: "grid", placeItems: "center", padding: "8vmin", background: "rgba(5,4,9,0.78)", backdropFilter: "blur(3px)" }}
             onClick={() => setMapOpen(false)}>
-            <div style={{ width: "min(90vw, 1100px)", maxHeight: "88vh", display: "flex", flexDirection: "column", padding: 18, background: "rgba(13,11,20,0.95)", border: "2px solid var(--gold)", boxShadow: "0 16px 60px rgba(0,0,0,0.8)" }}
+            <div style={{ width: "min(70vw, 760px)", maxHeight: "72vh", display: "flex", flexDirection: "column", padding: 18, background: "rgba(13,11,20,0.95)", border: "2px solid var(--gold)", boxShadow: "0 16px 60px rgba(0,0,0,0.8)" }}
               onClick={(e) => e.stopPropagation()}>
               <div className="row" style={{ justifyContent: "space-between", marginBottom: 10, flex: "0 0 auto" }}>
                 <span className="display" style={{ fontSize: 22, color: "var(--gold)" }}>SHIP MAP</span>

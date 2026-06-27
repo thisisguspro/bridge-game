@@ -79,8 +79,8 @@ export function useControls({ view, roomId, conn, onOpenTask, onOpenSabotage, on
           // iso world: screen-up is world (-x,-y); map intuitive WASD to world axes.
           // Project the destination far enough ahead that the server doesn't arrive
           // before the next packet. (~30% longer reach than before for snappier walk.)
-          const wx = v.you.x + (dx + dy) * 26;
-          const wy = v.you.y + (dy - dx) * 26;
+          const wx = v.you.x + (dx + dy) * 52;
+          const wy = v.you.y + (dy - dx) * 52;
           conn.setDestination(roomId, wx, wy);
         }
       }
