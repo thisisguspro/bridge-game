@@ -33,7 +33,15 @@ export default function MiniMap({ view, compact = false }) {
     return layout(rooms, adjacency, map.spawnRoom);
   }, [rooms, adjacency, map.spawnRoom, map.geometry]);
 
-  const size = compact ? 230 : 360;
+  // Aspect ratio of the actual ship, so the map never squishes or overflows.
+  const worldW = map.geometry?.worldW || 1;
+  const worldH = map.geometry?.worldH || 1;
+  const aspect = worldW && worldH ? worldW / worldH : 1.6;
+  const vbW = compact ? 300 : 600;
+  const vbH = Math.round(vbW / aspect);
+  const PAD = 0.08; // fraction padding so nodes/labels aren't clipped at edges
+  // map a normalized 0..1 position into the padded viewBox
+  const place = (p) => p ? { x: (PAD + p.x * (1 - 2 * PAD)) * vbW, y: (PAD + p.y * (1 - 2 * PAD)) * vbH } : null;
   const edges = useMemo(() => {
     if (!adjacency) return [];
     const seen = new Set(), out = [];
@@ -45,30 +53,32 @@ export default function MiniMap({ view, compact = false }) {
   }, [rooms, adjacency]);
 
   return (
-    <div style={{ position: "relative" }}>
-      <div className="row" style={{ justifyContent: "space-between", marginBottom: 6 }}>
-        <span className="impactf" style={{ fontSize: 11, letterSpacing: "0.14em", color: "var(--volt)" }}>TACTICAL MAP</span>
-        <span className="kanji faint" style={{ fontSize: 12 }}>戦域図</span>
-      </div>
-      <svg viewBox={`0 0 ${size} ${size}`} style={{ width: "100%", background: "var(--ink)", border: "2px solid var(--line)", display: "block" }}>
+    <div style={{ position: "relative", width: "100%", height: "100%", display: "flex", flexDirection: "column" }}>
+      {!compact && (
+        <div className="row" style={{ justifyContent: "space-between", marginBottom: 6 }}>
+          <span className="impactf" style={{ fontSize: 11, letterSpacing: "0.14em", color: "var(--volt)" }}>TACTICAL MAP</span>
+          <span className="kanji faint" style={{ fontSize: 12 }}>戦域図</span>
+        </div>
+      )}
+      <svg viewBox={`0 0 ${vbW} ${vbH}`} style={{ width: "100%", height: "100%", maxHeight: "100%", background: "var(--ink)", border: "2px solid var(--line)", display: "block" }} preserveAspectRatio="xMidYMid meet">
         {/* grid wash */}
         <defs>
           <pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse">
             <path d="M20 0H0V20" fill="none" stroke="rgba(120,110,150,0.08)" strokeWidth="1" />
           </pattern>
         </defs>
-        <rect x="0" y="0" width={size} height={size} fill="url(#grid)" />
+        <rect x="0" y="0" width={vbW} height={vbH} fill="url(#grid)" />
 
         {/* edges */}
         {edges.map(([a, b], i) => {
-          const pa = scale(pos[a], size), pb = scale(pos[b], size);
+          const pa = place(pos[a]), pb = place(pos[b]);
           if (!pa || !pb) return null;
           return <line key={i} x1={pa.x} y1={pa.y} x2={pb.x} y2={pb.y} stroke="rgba(160,150,190,0.22)" strokeWidth="2" />;
         })}
 
         {/* rooms */}
         {rooms.map((r) => {
-          const p = scale(pos[r], size); if (!p) return null;
+          const p = place(pos[r]); if (!p) return null;
           const isMe = r === myRoom, isTask = myTaskRooms.has(r), isTurret = turret.has(r), isO2 = refill.has(r);
           return (
             <g key={r} transform={`translate(${p.x},${p.y})`}>
@@ -101,12 +111,14 @@ export default function MiniMap({ view, compact = false }) {
       </svg>
 
       {/* legend */}
+      {!compact && (
       <div className="row gap-m" style={{ marginTop: 8, flexWrap: "wrap", fontSize: 11 }}>
         <Legend swatch={<span style={{ width: 8, height: 8, background: "var(--gold)", borderRadius: "50%", display: "inline-block" }} />} label="Task" />
         <Legend swatch={<span style={{ color: "var(--hot)", fontWeight: 700 }}>⌜⌝</span>} label="Turret" />
         <Legend swatch={<span style={{ color: "var(--volt)", fontWeight: 700, fontSize: 9 }}>O₂</span>} label="Oxygen" />
         <Legend swatch={<span style={{ width: 8, height: 8, background: "var(--hot)", display: "inline-block" }} />} label="You" />
       </div>
+      )}
     </div>
   );
 }

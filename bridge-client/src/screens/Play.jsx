@@ -658,7 +658,7 @@ function Match({ view, roomId, conn, events, onLeave }) {
 
         {/* hint + vote opener + comms */}
         <div style={{ position: "absolute", top: 14, right: 18, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
-          <div className="impactf faint" style={{ fontSize: 10, letterSpacing: "0.12em", pointerEvents: "none", opacity: 0.7 }}>build R20</div>
+          <div className="impactf faint" style={{ fontSize: 10, letterSpacing: "0.12em", pointerEvents: "none", opacity: 0.7 }}>build R21</div>
           <div className="row gap-s">
             <button className="btn" style={{ fontSize: 13, padding: "8px 14px", borderColor: "var(--volt)" }} onClick={() => { comms.setOpen(true); }}>声 COMMS</button>
             <button className="btn btn-hot" style={{ fontSize: 13, padding: "8px 16px" }} onClick={() => { setVoteOpen(true); }}>
@@ -758,17 +758,17 @@ function Match({ view, roomId, conn, events, onLeave }) {
           [M] FULL MAP
         </div>
 
-        {/* M: full detailed map overlay */}
+        {/* M: full detailed map overlay — sizes to the viewport so it always fits */}
         {mapOpen && (
-          <div style={{ position: "absolute", inset: 0, zIndex: 120, display: "grid", placeItems: "center", background: "rgba(5,4,9,0.78)", backdropFilter: "blur(3px)" }}
+          <div style={{ position: "absolute", inset: 0, zIndex: 120, display: "grid", placeItems: "center", padding: "4vmin", background: "rgba(5,4,9,0.78)", backdropFilter: "blur(3px)" }}
             onClick={() => setMapOpen(false)}>
-            <div style={{ width: "min(78%, 720px)", aspectRatio: "1.3", maxHeight: "82%", padding: 18, background: "rgba(13,11,20,0.95)", border: "2px solid var(--gold)", boxShadow: "0 16px 60px rgba(0,0,0,0.8)" }}
+            <div style={{ width: "min(90vw, 1100px)", maxHeight: "88vh", display: "flex", flexDirection: "column", padding: 18, background: "rgba(13,11,20,0.95)", border: "2px solid var(--gold)", boxShadow: "0 16px 60px rgba(0,0,0,0.8)" }}
               onClick={(e) => e.stopPropagation()}>
-              <div className="row" style={{ justifyContent: "space-between", marginBottom: 10 }}>
+              <div className="row" style={{ justifyContent: "space-between", marginBottom: 10, flex: "0 0 auto" }}>
                 <span className="display" style={{ fontSize: 22, color: "var(--gold)" }}>SHIP MAP</span>
                 <span className="faint" style={{ fontSize: 11 }}>[M] or [Esc] to close</span>
               </div>
-              <div style={{ width: "100%", height: "calc(100% - 36px)" }}><MiniMap view={view} /></div>
+              <div style={{ flex: "1 1 auto", minHeight: 0, display: "flex" }}><MiniMap view={view} /></div>
             </div>
           </div>
         )}

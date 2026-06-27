@@ -867,6 +867,7 @@ export class GameEngine {
     const task = p.tasks.find((t) => t.id === taskId);
     if (!task) throw new Error("That task isn't yours.");
     if (task.done) throw new Error("Already done.");
+    if (p.inCorridor) throw new Error("Get inside the room, onto the task marker.");
     if (p.room !== task.room) throw new Error("You must be in the task's room.");
     if (this._tasksFrozen()) throw new Error("Systems are EMP-locked — repair the outage first.");
     task.startedAt = this.now;
@@ -1263,6 +1264,12 @@ export class GameEngine {
       else if (iAmImpostor && p.role === ROLE.IMPOSTOR) base.role = ROLE.IMPOSTOR; // impostors see each other
       else base.role = "unknown";
       return base;
+    }).filter((base) => {
+      // The downed exist on the energy plane: the LIVING can't see them at all
+      // (they're effectively ghosts/drones). Yourself is always included; downed
+      // viewers and the post-game screen still see everyone.
+      if (base.id === me.id || ended || iAmDowned) return true;
+      return base.plane !== PLANE.ENERGY;
     });
 
     // Comms scope: physical players hear only same-room players; downed players

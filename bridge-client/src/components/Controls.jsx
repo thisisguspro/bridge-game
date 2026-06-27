@@ -94,14 +94,51 @@ export function useControls({ view, roomId, conn, onOpenTask, onOpenSabotage, on
   return { binds, showHints, showTips, showColorblind, hints };
 }
 
-// How close (world units) you must be to a room's interaction icon (its center)
-// to use it. Prevents interacting from across the room.
-const INTERACT_RANGE = 280;
-function nearInteractIcon(v) {
+// The exclamation-mark position for a task: room center + a deterministic offset
+// (MUST match getTaskWorldPos in IsoStage so the hitbox sits exactly on the icon).
+function taskWorldPos(geo, roomName, taskName) {
+  const r = geo?.rooms?.[roomName];
+  if (!r) return null;
+  const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+  let hash = 0;
+  const str = taskName || "";
+  for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  const idx = Math.abs(hash);
+  const offsets = [
+    { dx: -r.w / 4, dy: -r.h / 4 }, { dx: r.w / 4, dy: r.h / 4 },
+    { dx: -r.w / 4, dy: r.h / 4 }, { dx: r.w / 4, dy: -r.h / 4 },
+    { dx: 0, dy: -r.h / 3 }, { dx: 0, dy: r.h / 3 },
+  ];
+  const o = offsets[idx % offsets.length];
+  return { x: cx + o.dx, y: cy + o.dy };
+}
+
+// How close (world units) you must stand to a task's exclamation mark / station
+// icon to use it. Tight, so you must be right on the marker — not in the corridor.
+const INTERACT_RANGE = 130;
+function distTo(v, pos) {
+  const you = v.you || {};
+  if (!pos || you.x == null) return Infinity;
+  return Math.hypot(you.x - pos.x, you.y - pos.y);
+}
+// nearest UNDONE task in the current room that you're standing on
+function nearestTask(v) {
+  const you = v.you || {};
+  const geo = v.map?.geometry;
+  if (you.inCorridor) return null; // never from a corridor
+  const cands = (you.tasks || []).filter((t) => t.room === you.room && !t.done);
+  for (const t of cands) {
+    const pos = taskWorldPos(geo, t.room, t.name);
+    if (distTo(v, pos) <= INTERACT_RANGE) return t;
+  }
+  return null;
+}
+// near a station icon (refill/repair/turret) — these sit at the room center
+function nearStationIcon(v) {
   const you = v.you || {};
   const geo = v.map?.geometry;
   const r = geo?.rooms?.[you.room];
-  if (!r || you.x == null) return false;
+  if (!r || you.x == null || you.inCorridor) return false;
   const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
   return Math.hypot(you.x - cx, you.y - cy) <= INTERACT_RANGE;
 }
@@ -110,15 +147,15 @@ function nearInteractIcon(v) {
 function doInteract(v, roomId, conn, onOpenTask, onOpenTurret) {
   const you = v.you || {};
   const room = you.room;
-  if (!nearInteractIcon(v)) return; // must be near the icon, not just in the room
+  if (you.inCorridor) return; // no interaction while in a corridor
   // turret: if you're at a turret station during an attack, E mans/opens it
-  if ((v.map?.turretRooms || []).includes(room) && v.globalAttack && !v.globalAttack.warning) {
+  if ((v.map?.turretRooms || []).includes(room) && v.globalAttack && !v.globalAttack.warning && nearStationIcon(v)) {
     onOpenTurret?.(); return;
   }
-  const task = (you.tasks || []).find((t) => t.room === room && !t.done);
+  const task = nearestTask(v);
   if (task) { conn.startTask(roomId, task.id); onOpenTask?.(task); return; }
-  if ((v.map?.refillRooms || []).includes(room)) { conn.refill(roomId); return; }
-  if ((v.map?.repairRooms || []).includes(room)) { conn.repair(roomId); return; }
+  if ((v.map?.refillRooms || []).includes(room) && nearStationIcon(v)) { conn.refill(roomId); return; }
+  if ((v.map?.repairRooms || []).includes(room) && nearStationIcon(v)) { conn.repair(roomId); return; }
 }
 function doUseTool(v, roomId, conn) {
   const you = v.you || {};
@@ -145,25 +182,31 @@ function computeHints(view, binds, taskOpen) {
   // movement is always available
   out.push({ key: `${key(binds.moveUp)}${key(binds.moveLeft)}${key(binds.moveDown)}${key(binds.moveRight)}`, label: "Move", combo: true });
 
-  // contextual: task / refill / repair on E — only when near the room's icon
-  const task = (you.tasks || []).find((t) => t.room === room && !t.done);
-  const hasStation = task || (view.map?.refillRooms || []).includes(room) || (view.map?.repairRooms || []).includes(room);
-  const near = nearInteractIcon(view);
-  if (hasStation && !near) {
-    out.push({ key: "→", label: "Walk to the glowing icon to interact" });
-  } else if (task && near) {
-    out.push({ key: key(binds.interact), label: `Do task: ${task.name}`, hot: true });
-  } else if ((view.map?.refillRooms || []).includes(room) && near) {
-    out.push({ key: key(binds.interact), label: "Refill O₂", hot: true });
-  } else if ((view.map?.repairRooms || []).includes(room) && near) {
-    const cd = view.systems?.repairCdLeft || 0;
-    out.push({ key: key(binds.interact), label: cd > 0 ? `Repair (recharging ${cd}s)` : "Repair hull", hot: cd === 0, disabled: cd > 0 });
-  }
+  // contextual: task / refill / repair on E — only when standing on the marker
+  if (you.inCorridor) {
+    // in a corridor: no station hints (you can't interact here)
+  } else {
+    const onTask = nearestTask(view);
+    const anyTaskInRoom = (you.tasks || []).some((t) => t.room === room && !t.done);
+    const atStation = nearStationIcon(view);
+    if (onTask) {
+      out.push({ key: key(binds.interact), label: `Do task: ${onTask.name}`, hot: true });
+    } else if (anyTaskInRoom) {
+      out.push({ key: "→", label: "Stand on the ❗ to start the task" });
+    } else if ((view.map?.refillRooms || []).includes(room) && atStation) {
+      out.push({ key: key(binds.interact), label: "Refill O₂", hot: true });
+    } else if ((view.map?.repairRooms || []).includes(room) && atStation) {
+      const cd = view.systems?.repairCdLeft || 0;
+      out.push({ key: key(binds.interact), label: cd > 0 ? `Repair (recharging ${cd}s)` : "Repair hull", hot: cd === 0, disabled: cd > 0 });
+    } else if (((view.map?.refillRooms || []).includes(room) || (view.map?.repairRooms || []).includes(room))) {
+      out.push({ key: "→", label: "Walk to the station icon" });
+    }
 
-  // turret station: E to man it during an attack
-  if ((view.map?.turretRooms || []).includes(room) && view.globalAttack && !view.globalAttack.warning) {
-    if (near) out.push({ key: key(binds.interact), label: "Man turret — fire!", hot: true });
-    else out.push({ key: "→", label: "Get to the turret icon!" });
+    // turret station: E to man it during an attack
+    if ((view.map?.turretRooms || []).includes(room) && view.globalAttack && !view.globalAttack.warning) {
+      if (atStation) out.push({ key: key(binds.interact), label: "Man turret — fire!", hot: true });
+      else out.push({ key: "→", label: "Get to the turret icon!" });
+    }
   }
 
   // impostor tools
