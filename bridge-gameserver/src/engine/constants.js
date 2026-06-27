@@ -55,8 +55,8 @@ export const POWER = {
 // with shield/repair recovery, not one continuous burn (which is unsurvivable
 // by design — engines-on forces shields-off). See TUNING.md for the full model.
 export const JOURNEY = {
-  DISTANCE: 1350,                // sweep-tuned: ~11min median matches at 8 players
-  ENGINE_SPEED_PER_SEC: 1.2,
+  DISTANCE: 700,                 // rebalanced: reachable within a match against attack pressure
+  ENGINE_SPEED_PER_SEC: 2.2,
 };
 
 // ---- Continuous movement (real-time top-down) ----
@@ -212,6 +212,7 @@ export const MINIGAMES = {
   code_sequence: { key: "code_sequence", label: "Reflex Sequence",       minSeconds: 8, energy: false },
   alignment:     { key: "alignment",     label: "Target Tracking",       minSeconds: 10, energy: false },
   hold_timing:   { key: "hold_timing",   label: "Flappy Stabilizer",     minSeconds: 12, energy: false },
+  spacewalk:     { key: "spacewalk",     label: "Hull Breach Repair",     minSeconds: 20, energy: false },
   // Energy plane (cyan tinted, for downed ghosts)
   flux_route:    { key: "flux_route",    label: "Whack-a-Node",          minSeconds: 12, energy: true },
   phase_match:   { key: "phase_match",   label: "Target Tracking",       minSeconds: 10, energy: true },

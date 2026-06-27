@@ -44,6 +44,7 @@ export function createGameConnection({ onState, onEvents, onError, onConnect, on
     completeTask: (roomId, taskId) => socket.emit("complete_task", { roomId, taskId }),
     refill: (roomId) => socket.emit("refill", { roomId }),
     repair: (roomId) => socket.emit("repair", { roomId }),
+    airlockDoor: (roomId, open) => socket.emit("airlock_door", { roomId, open }),
     setEngineLevel: (roomId, level) => socket.emit("set_engine_level", { roomId, level }),
     allocate: (roomId, system, value) => socket.emit("allocate", { roomId, system, value }),
     detachCable: (roomId, targetId) => socket.emit("detach_cable", { roomId, targetId }),

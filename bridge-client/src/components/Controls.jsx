@@ -17,7 +17,7 @@ const DEFAULT_BINDS = {
   interact: "KeyE", useTool: "KeyF", sabotage: "KeyQ", commsWheel: "KeyC",
 };
 
-export function useControls({ view, roomId, conn, onOpenTask, onOpenSabotage, taskOpen }) {
+export function useControls({ view, roomId, conn, onOpenTask, onOpenSabotage, onOpenTurret, taskOpen }) {
   const [binds, setBinds] = useState(DEFAULT_BINDS);
   const [showHints, setShowHints] = useState(true);
   const [showTips, setShowTips] = useState(true);
@@ -51,7 +51,7 @@ export function useControls({ view, roomId, conn, onOpenTask, onOpenSabotage, ta
       }
       if (taskOpen) return; // the task mini-game has its own controls
       e.preventDefault();
-      if (action === "interact") doInteract(v, roomId, conn, onOpenTask);
+      if (action === "interact") doInteract(v, roomId, conn, onOpenTask, onOpenTurret);
       else if (action === "useTool") doUseTool(v, roomId, conn);
       else if (action === "sabotage" && v.you?.role === "impostor") onOpenSabotage?.();
     };
@@ -62,7 +62,7 @@ export function useControls({ view, roomId, conn, onOpenTask, onOpenSabotage, ta
     window.addEventListener("keydown", down);
     window.addEventListener("keyup", up);
     return () => { window.removeEventListener("keydown", down); window.removeEventListener("keyup", up); };
-  }, [binds, roomId, conn, taskOpen, onOpenTask, onOpenSabotage]);
+  }, [binds, roomId, conn, taskOpen, onOpenTask, onOpenSabotage, onOpenTurret]);
 
   // movement loop: while a WASD key is held, push the destination in that dir
   useEffect(() => {
@@ -76,10 +76,11 @@ export function useControls({ view, roomId, conn, onOpenTask, onOpenSabotage, ta
         if (held.current.has("moveLeft")) dx -= 1;
         if (held.current.has("moveRight")) dx += 1;
         if (dx !== 0 || dy !== 0) {
-          // iso world: screen-up is world (-x,-y); map intuitive WASD to world axes
-          // Set destination far enough ahead that the server doesn't arrive before the next packet!
-          const wx = v.you.x + (dx + dy) * 20;
-          const wy = v.you.y + (dy - dx) * 20;
+          // iso world: screen-up is world (-x,-y); map intuitive WASD to world axes.
+          // Project the destination far enough ahead that the server doesn't arrive
+          // before the next packet. (~30% longer reach than before for snappier walk.)
+          const wx = v.you.x + (dx + dy) * 26;
+          const wy = v.you.y + (dy - dx) * 26;
           conn.setDestination(roomId, wx, wy);
         }
       }
@@ -93,10 +94,27 @@ export function useControls({ view, roomId, conn, onOpenTask, onOpenSabotage, ta
   return { binds, showHints, showTips, showColorblind, hints };
 }
 
+// How close (world units) you must be to a room's interaction icon (its center)
+// to use it. Prevents interacting from across the room.
+const INTERACT_RANGE = 280;
+function nearInteractIcon(v) {
+  const you = v.you || {};
+  const geo = v.map?.geometry;
+  const r = geo?.rooms?.[you.room];
+  if (!r || you.x == null) return false;
+  const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+  return Math.hypot(you.x - cx, you.y - cy) <= INTERACT_RANGE;
+}
+
 // --- action resolvers (mirror what the HUD buttons do) ---
-function doInteract(v, roomId, conn, onOpenTask) {
+function doInteract(v, roomId, conn, onOpenTask, onOpenTurret) {
   const you = v.you || {};
   const room = you.room;
+  if (!nearInteractIcon(v)) return; // must be near the icon, not just in the room
+  // turret: if you're at a turret station during an attack, E mans/opens it
+  if ((v.map?.turretRooms || []).includes(room) && v.globalAttack && !v.globalAttack.warning) {
+    onOpenTurret?.(); return;
+  }
   const task = (you.tasks || []).find((t) => t.room === room && !t.done);
   if (task) { conn.startTask(roomId, task.id); onOpenTask?.(task); return; }
   if ((v.map?.refillRooms || []).includes(room)) { conn.refill(roomId); return; }
@@ -127,11 +145,26 @@ function computeHints(view, binds, taskOpen) {
   // movement is always available
   out.push({ key: `${key(binds.moveUp)}${key(binds.moveLeft)}${key(binds.moveDown)}${key(binds.moveRight)}`, label: "Move", combo: true });
 
-  // contextual: task / refill / repair on E
+  // contextual: task / refill / repair on E — only when near the room's icon
   const task = (you.tasks || []).find((t) => t.room === room && !t.done);
-  if (task) out.push({ key: key(binds.interact), label: `Do task: ${task.name}`, hot: true });
-  else if ((view.map?.refillRooms || []).includes(room)) out.push({ key: key(binds.interact), label: "Refill O₂", hot: true });
-  else if ((view.map?.repairRooms || []).includes(room)) out.push({ key: key(binds.interact), label: "Repair hull", hot: true });
+  const hasStation = task || (view.map?.refillRooms || []).includes(room) || (view.map?.repairRooms || []).includes(room);
+  const near = nearInteractIcon(view);
+  if (hasStation && !near) {
+    out.push({ key: "→", label: "Walk to the glowing icon to interact" });
+  } else if (task && near) {
+    out.push({ key: key(binds.interact), label: `Do task: ${task.name}`, hot: true });
+  } else if ((view.map?.refillRooms || []).includes(room) && near) {
+    out.push({ key: key(binds.interact), label: "Refill O₂", hot: true });
+  } else if ((view.map?.repairRooms || []).includes(room) && near) {
+    const cd = view.systems?.repairCdLeft || 0;
+    out.push({ key: key(binds.interact), label: cd > 0 ? `Repair (recharging ${cd}s)` : "Repair hull", hot: cd === 0, disabled: cd > 0 });
+  }
+
+  // turret station: E to man it during an attack
+  if ((view.map?.turretRooms || []).includes(room) && view.globalAttack && !view.globalAttack.warning) {
+    if (near) out.push({ key: key(binds.interact), label: "Man turret — fire!", hot: true });
+    else out.push({ key: "→", label: "Get to the turret icon!" });
+  }
 
   // impostor tools
   if (you.role === "impostor" && you.plane !== "eliminated") {

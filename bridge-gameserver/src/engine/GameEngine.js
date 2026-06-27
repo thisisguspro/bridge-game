@@ -84,9 +84,11 @@ export class GameEngine {
     // Crew route power between shields and engines using a 5-level slider (0=100% Shield, 5=100% Engine)
     this.systems = { engineLevel: 0 };
     this.airlockLocked = false;     // true when airlock sabotage is active
+    this.airlockDoorOpen = false;   // the outer door: open = you can pass Airlock<->Space
     this.airlockBanging = new Set(); // playerIds banging on the airlock door
     this.globalAttack = null;        // { startedAt, shipsTotal: 10, shipsDestroyed: 0, shipsEscaped: 0, difficulty: 1 }
     this.globalAttackCdUntil = 30;   // cooldown before next attack can start (first attack waits 30s)
+    this.repairCdUntil = 0;          // global shared repair cooldown
     this.helmMomentum = { target: 0, current: 0 }; // for gradual speed changes
     // ---- v0.4 perk draft ----
     this.draft = null;          // { candidates:[keys], votes:Map(voterId->Set(keys)), startedAt }
@@ -471,7 +473,7 @@ export class GameEngine {
     const g = this.map.geometry;
     if (!g) return true;
 
-    const CORR_HW = 250;       // corridor half-width in world units — must match visual hw in IsoStage (was 500)
+    const CORR_HW = 340;       // corridor half-width in world units — wider mouths so room↔corridor junctions have no tight notch (must match visual hw in IsoStage)
 
     // Helper: clamp t onto a segment and return perpendicular distance
     const nearSegment = (px, py, ax, ay, bx, by) => {
@@ -549,15 +551,15 @@ export class GameEngine {
           p.x = nextX;
           p.y = nextY;
         } else {
-          // Angle-sweep sliding: find the closest valid movement vector
+          // Angle-sweep sliding: find the closest valid movement vector.
+          // (speed already includes dt; do NOT multiply by dt again.)
           let slid = false;
           const a0 = Math.atan2(dy, dx);
           for (let deg = 10; deg <= 85; deg += 10) {
             for (const sign of [1, -1]) {
               const a = a0 + sign * deg * Math.PI / 180;
-              // move at slightly reduced speed when sliding to prevent jitter
-              const nx = p.x + Math.cos(a) * speed * dt * 0.9;
-              const ny = p.y + Math.sin(a) * speed * dt * 0.9;
+              const nx = p.x + Math.cos(a) * speed * 0.9;
+              const ny = p.y + Math.sin(a) * speed * 0.9;
               if (this._isValidPosition(nx, ny)) {
                 p.x = nx;
                 p.y = ny;
@@ -573,9 +575,11 @@ export class GameEngine {
           }
         }
       }
-      // derive room from position; keep last known room if between cells
+      // derive room from position; keep last known REAL room for game logic, but
+      // flag when you're between cells so the HUD can show "Corridor".
       const r = this._roomAt(p.x, p.y);
-      if (r) p.room = r;
+      if (r) { p.room = r; p.inCorridor = false; }
+      else if (p.x != null) { p.inCorridor = true; }
     }
   }
 
@@ -643,7 +647,24 @@ export class GameEngine {
     this._log("airlock_opened", { by: playerId });
   }
 
-  // ---------- turret: shoot incoming attack ships ----------
+  // The outer airlock door. Anyone (crew or outlaw) can open/close it, but ONLY
+  // from the inside (standing in the Airlock room). If you're out in Space you
+  // cannot operate it — so you can be sealed out. Opening lets you pass between
+  // Airlock and Space; closing seals the boundary.
+  setAirlockDoor(playerId, open) {
+    this._requireActive();
+    const p = this._player(playerId);
+    if (p.plane !== PLANE.PHYSICAL) throw new Error("Only physical players can use the door.");
+    if (p.room !== "Airlock") throw new Error("You must be inside the airlock to use the door.");
+    if (this.airlockLocked && this.sabotages.has("AIRLOCK_LOCKDOWN")) {
+      throw new Error("Airlock is locked down — resolve the sabotage first.");
+    }
+    this.airlockDoorOpen = !!open;
+    this.airlockBanging.clear();
+    this._log("airlock_door", { by: playerId, open: this.airlockDoorOpen });
+    return { open: this.airlockDoorOpen };
+  }
+
   shootTurretShip(playerId) {
     this._requireActive();
     const p = this._player(playerId);
@@ -669,10 +690,17 @@ export class GameEngine {
     const p = this._player(playerId);
     if (p.plane !== PLANE.PHYSICAL) throw new Error("Downed players can't run repairs.");
     if (!this.map.repairRooms.includes(p.room)) throw new Error("No repair station here.");
+    // Global shared cooldown: one repair per 30s across the whole crew, so hull
+    // can't be spam-healed faster than the outlaws can pressure it.
+    if (this.now < (this.repairCdUntil || 0)) {
+      const wait = Math.ceil(this.repairCdUntil - this.now);
+      throw new Error(`Repair systems recharging — ${wait}s.`);
+    }
     if (this.power < POWER.PER_TASK) throw new Error("Not enough power to run a repair cycle.");
     this.power -= POWER.PER_TASK;
     this.hull = Math.min(HULL.MAX, this.hull + 15);
-    this._log("repair", { id: playerId, hull: Math.round(this.hull) });
+    this.repairCdUntil = this.now + 30;
+    this._log("repair", { id: playerId, hull: Math.round(this.hull), cdUntil: this.repairCdUntil });
   }
 
   // ---------- crossing to the energy plane (replaces "death") ----------
@@ -1052,17 +1080,21 @@ export class GameEngine {
         const dealt = atk.shipsDestroyed + atk.shipsEscaped;
         if (dealt < atk.shipsTotal && this.now - atk._lastShipAt >= shipInterval) {
           atk._lastShipAt = this.now;
-          // A ship that isn't destroyed within its window deals 5 hull damage (lowered from 8)
+          // An escaped ship damages the hull. Base damage is modest; SHIELDS now
+          // actually absorb most of it (this was the core imbalance — shields were
+          // computed but never applied). Engines-up means little/no shield, so the
+          // crew take the journey-vs-safety tradeoff the design intends.
           atk.shipsEscaped++;
           const attract = this._attractActive();
-          let dmg = 5;
-          // Scale damage based on speed: faster speed = heavier hits!
-          const speedFactor = 1 + this.helmMomentum.current;
-          dmg *= speedFactor;
+          let dmg = 3.2; // base per escaped ship (was 5)
+          // shieldPct (0..1): fraction of power routed to shields right now.
+          // Shields absorb up to ~85% of incoming damage at full shield.
+          const absorb = 0.85 * shieldPct;
+          dmg *= (1 - absorb);
           dmg *= this._eff("attackDamageMult");
           if (attract) dmg *= ATTRACT.dmgFactor;
           this.hull = Math.max(0, this.hull - dmg);
-          this._log("attack", { dmg, shielded: shieldPct > 0.5, hull: Math.round(this.hull) });
+          this._log("attack", { dmg: Math.round(dmg * 10) / 10, shieldPct: Math.round(shieldPct * 100), hull: Math.round(this.hull) });
 
           if (this.hull <= 0 && !this.mode) { this._end(WINNER.IMPOSTORS, "hull_destroyed"); return; }
         }
@@ -1252,6 +1284,8 @@ export class GameEngine {
       map: { id: this.map.id, name: this.map.name, rooms: this.map.rooms,
         refillRooms: this.map.refillRooms, turretRooms: this.map.turretRooms,
         repairRooms: this.map.repairRooms, helmRoom: 'Helm',
+        repairCdLeft: Math.max(0, Math.ceil((this.repairCdUntil || 0) - this.now)),
+        airlockDoorOpen: this.airlockDoorOpen,
         // Non-secret layout metadata the client HUD/minimap needs:
         adjacency: this.map.adjacency || null, spawnRoom: this.map.spawnRoom,
         geometry: this.map.geometry || null,
@@ -1292,6 +1326,8 @@ export class GameEngine {
       taskProgress: this.taskProgress(),
       you: {
         id: me.id, role: me.role, plane: me.plane, room: me.room,
+        inCorridor: !!me.inCorridor,
+        displayRoom: me.inCorridor ? "Corridor" : me.room,
         x: me.x ?? null, y: me.y ?? null, tx: me.tx ?? null, ty: me.ty ?? null,
         oxygen: Math.round(me.oxygen),
         lowOxygen: me.oxygen <= OXYGEN.PANIC_THRESHOLD,

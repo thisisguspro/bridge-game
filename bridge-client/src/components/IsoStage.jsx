@@ -287,7 +287,7 @@ export default function IsoStage({ view, showColorblind = false }) {
     
     // -- DRAW CORRIDORS: wall-edge to wall-edge with yellow doorway markers --
     // hw must match CORR_HW on the server (250 world units)
-    const CORR_HW = 250;
+    const CORR_HW = 340;
     ctx.lineCap = "butt";
 
     // Helper: find point on room's boundary in direction (ux,uy) from center
@@ -383,53 +383,48 @@ export default function IsoStage({ view, showColorblind = false }) {
       ];
 
       walls.forEach((wall) => {
-        let doorMid = null;
-        let doorDir = null;
-
+        // Collect ALL doorway openings on this wall (a wall can connect to more
+        // than one corridor). Each opening is an interval to leave UN-drawn so we
+        // never paint a yellow line across a walkable corridor mouth.
+        const openings = [];
         for (const [a, b] of roomCorrs) {
           const neighbor = a === name ? b : a;
           const rn = geo.rooms[neighbor];
           if (!rn) continue;
-
           const ncx = rn.x + rn.w / 2;
           const ncy = rn.y + rn.h / 2;
           const dx = ncx - cx;
           const dy = ncy - cy;
-
           let wallIdx = -1;
-          if (Math.abs(dx) > Math.abs(dy)) {
-            wallIdx = dx > 0 ? 1 : 3;
-          } else {
-            wallIdx = dy > 0 ? 2 : 0;
-          }
-
-          if (wall.idx === wallIdx) {
-            const len = Math.hypot(dx, dy);
-            doorMid = wallExit(r, dx / len, dy / len);
-            doorDir = { x: -dy / len, y: dx / len };
-            break;
-          }
+          if (Math.abs(dx) > Math.abs(dy)) wallIdx = dx > 0 ? 1 : 3;
+          else wallIdx = dy > 0 ? 2 : 0;
+          if (wall.idx !== wallIdx) continue;
+          const len = Math.hypot(dx, dy) || 1;
+          const doorMid = wallExit(r, dx / len, dy / len);
+          // parameterize the door center along the wall (0..1 from p1 to p2)
+          const wlen = Math.hypot(wall.p2.x - wall.p1.x, wall.p2.y - wall.p1.y) || 1;
+          const t = ((doorMid.x - wall.p1.x) * (wall.p2.x - wall.p1.x) + (doorMid.y - wall.p1.y) * (wall.p2.y - wall.p1.y)) / (wlen * wlen);
+          const half = CORR_HW / wlen;
+          openings.push([Math.max(0, t - half), Math.min(1, t + half)]);
         }
 
-        if (doorMid && doorDir) {
-          const doorEdge1 = { x: doorMid.x + doorDir.x * CORR_HW, y: doorMid.y + doorDir.y * CORR_HW };
-          const doorEdge2 = { x: doorMid.x - doorDir.x * CORR_HW, y: doorMid.y - doorDir.y * CORR_HW };
+        // Build the solid (wall) segments = [0,1] minus the openings.
+        openings.sort((m, n) => m[0] - n[0]);
+        const segs = [];
+        let cursor = 0;
+        for (const [o0, o1] of openings) {
+          if (o0 > cursor) segs.push([cursor, o0]);
+          cursor = Math.max(cursor, o1);
+        }
+        if (cursor < 1) segs.push([cursor, 1]);
 
-          const s1 = toScreen(wall.p1.x, wall.p1.y);
-          const s2 = toScreen(wall.p2.x, wall.p2.y);
-          const sd1 = toScreen(doorEdge1.x, doorEdge1.y);
-          const sd2 = toScreen(doorEdge2.x, doorEdge2.y);
-
-          const d1_to_sd1 = Math.hypot(wall.p1.x - doorEdge1.x, wall.p1.y - doorEdge1.y);
-          const d1_to_sd2 = Math.hypot(wall.p1.x - doorEdge2.x, wall.p1.y - doorEdge2.y);
-          const closeEdge = d1_to_sd1 < d1_to_sd2 ? sd1 : sd2;
-          const farEdge = d1_to_sd1 < d1_to_sd2 ? sd2 : sd1;
-
-          ctx.beginPath(); ctx.moveTo(s1.sx + ox, s1.sy + oy); ctx.lineTo(closeEdge.sx + ox, closeEdge.sy + oy); ctx.stroke();
-          ctx.beginPath(); ctx.moveTo(farEdge.sx + ox, farEdge.sy + oy); ctx.lineTo(s2.sx + ox, s2.sy + oy); ctx.stroke();
-        } else {
-          const s1 = toScreen(wall.p1.x, wall.p1.y);
-          const s2 = toScreen(wall.p2.x, wall.p2.y);
+        // Draw each solid wall segment in yellow.
+        const lerp = (t) => ({ x: wall.p1.x + (wall.p2.x - wall.p1.x) * t, y: wall.p1.y + (wall.p2.y - wall.p1.y) * t });
+        for (const [t0, t1] of segs) {
+          if (t1 - t0 < 0.001) continue;
+          const a1 = lerp(t0), a2 = lerp(t1);
+          const s1 = toScreen(a1.x, a1.y);
+          const s2 = toScreen(a2.x, a2.y);
           ctx.beginPath(); ctx.moveTo(s1.sx + ox, s1.sy + oy); ctx.lineTo(s2.sx + ox, s2.sy + oy); ctx.stroke();
         }
       });

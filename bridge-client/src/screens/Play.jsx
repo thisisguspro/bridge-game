@@ -424,6 +424,7 @@ function Match({ view, roomId, conn, events, onLeave }) {
   const [sabOpen, setSabOpen] = useState(false);
   const [helmOpen, setHelmOpen] = useState(false);
   const [turretOpen, setTurretOpen] = useState(false);
+  const [mapOpen, setMapOpen] = useState(false);
   const [slashActive, setSlashActive] = useState(false);
   const [activeTask, setActiveTask] = useState(null);
   const [pauseOpen, setPauseOpen] = useState(false);
@@ -436,9 +437,11 @@ function Match({ view, roomId, conn, events, onLeave }) {
     taskOpen: !!activeTask,
     onOpenTask: (t) => setActiveTask(t),
     onOpenSabotage: () => setSabOpen(true),
+    onOpenTurret: () => setTurretOpen(true),
   });
   const you = view.you || {};
   const room = you.room;
+  const displayRoom = you.displayRoom || you.room;
   const map = view.map || {};
   const here = (view.players || []).filter((p) => p.room === room && p.id !== you.id);
   const myTasks = (you.tasks || []).filter((t) => t.room === room && !t.done);
@@ -460,15 +463,21 @@ function Match({ view, roomId, conn, events, onLeave }) {
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === 'Escape') {
-        if (turretOpen) setTurretOpen(false);
+        if (mapOpen) setMapOpen(false);
+        else if (turretOpen) setTurretOpen(false);
         else if (helmOpen) setHelmOpen(false);
         else if (sabOpen) setSabOpen(false);
         else setPauseOpen(p => !p);
+      } else if (e.code === 'KeyM' && !e.repeat) {
+        // don't steal M while typing in an input
+        const tag = (e.target.tagName || "").toLowerCase();
+        if (tag === "input" || tag === "textarea") return;
+        setMapOpen(o => !o);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [helmOpen, sabOpen, turretOpen]);
+  }, [helmOpen, sabOpen, turretOpen, mapOpen]);
 
   // Show "YOU WERE DOWNED" banner for 3 seconds on first energy plane entry
   useEffect(() => {
@@ -484,7 +493,7 @@ function Match({ view, roomId, conn, events, onLeave }) {
   const pull = (id) => (e) => { conn.detachCable(roomId, id); sfx.slash(); setSlashActive(true); if (e) pop(e.clientX, e.clientY); };
 
   return (
-    <div style={{ height: "100%", display: "grid", gridTemplateColumns: "300px 1fr 320px" }}>
+    <div style={{ height: "100%", display: "grid", gridTemplateColumns: "270px 1fr" }}>
       {layer}
       <SlashEffect active={slashActive} onDone={() => setSlashActive(false)} />
       {/* voting overlay */}
@@ -524,26 +533,43 @@ function Match({ view, roomId, conn, events, onLeave }) {
           </div>
         </div>
       )}
-      {/* LEFT: ship status */}
+      {/* LEFT: ship status — floats over gameplay with drop shadows, no panel bg */}
       <div style={sidePane}>
-        <div className="tag"><span>Ship status</span></div>
-        <Gauge label="HULL" value={view.hull} max={map.hullMax || 150} color="var(--hot)" kanji="船体" />
-        <Gauge label="POWER" value={Math.round(view.power)} max={1000} color="var(--gold)" kanji="動力" />
-        <Gauge label="YOUR O₂" value={Math.round(you.oxygen)} max={100} color="var(--volt)" kanji="酸素" />
-        <div style={{ marginTop: 14 }}>
-          <div className="impactf faint" style={{ fontSize: 11, letterSpacing: "0.12em" }}>JOURNEY</div>
-          <div style={journeyTrack}>
-            <div style={{ ...journeyFill, width: `${Math.min(100, (view.journey?.distance / (view.journey?.total || 1)) * 100)}%` }} />
+        <div style={leftCard}>
+          <div className="tag"><span>Ship status</span></div>
+          <Gauge label="HULL" value={view.hull} max={map.hullMax || 150} color="var(--hot)" kanji="船体" />
+          <Gauge label="POWER" value={Math.round(view.power)} max={1000} color="var(--gold)" kanji="動力" />
+          <Gauge label="YOUR O₂" value={Math.round(you.oxygen)} max={100} color="var(--volt)" kanji="酸素" />
+          <div style={{ marginTop: 14 }}>
+            <div className="impactf faint" style={{ fontSize: 11, letterSpacing: "0.12em" }}>JOURNEY</div>
+            <div style={journeyTrack}>
+              <div style={{ ...journeyFill, width: `${Math.min(100, (view.journey?.distance / (view.journey?.total || 1)) * 100)}%` }} />
+            </div>
+            <div className="faint" style={{ fontSize: 11, marginTop: 4 }}>{Math.round(view.journey?.distance || 0)} / {view.journey?.total} to landing</div>
           </div>
-          <div className="faint" style={{ fontSize: 11, marginTop: 4 }}>{Math.round(view.journey?.distance || 0)} / {view.journey?.total} to landing</div>
         </div>
-        <div style={{ marginTop: 16 }}>
-          <div className="impactf faint" style={{ fontSize: 11, letterSpacing: "0.12em", marginBottom: 6 }}>SYSTEMS</div>
-          <div className="row gap-s" style={{ flexWrap: "wrap" }}>
-            <Sys on={true} label="O₂" />
-            <Sys on={(view.systems?.engineLevel ?? 0) > 0} label="ENG" />
-            <Sys on={(view.systems?.engineLevel ?? 0) < 5} label="SHLD" />
-          </div>
+
+        {/* mini shield/engine allocation bar — a compact copy of the Helm throttle
+            so everyone can see the current power split at a glance */}
+        <div style={leftCard}>
+          <div className="impactf faint" style={{ fontSize: 11, letterSpacing: "0.12em", marginBottom: 6 }}>POWER BALANCE</div>
+          {(() => {
+            const enginePct = ((view.systems?.engineSpeed ?? 0) / 5) * 100;
+            const shieldPct = 100 - enginePct;
+            return (
+              <>
+                <div className="row" style={{ justifyContent: "space-between", fontSize: 9 }}>
+                  <span style={{ color: "var(--volt)" }}>SHLD {Math.round(shieldPct)}%</span>
+                  <span style={{ color: "var(--hot)" }}>ENG {Math.round(enginePct)}%</span>
+                </div>
+                <div style={{ position: "relative", height: 12, background: "var(--ink)", border: "1px solid var(--line)", display: "flex", marginTop: 3 }}>
+                  <div style={{ width: `${shieldPct}%`, background: "var(--volt)", opacity: 0.8 }} />
+                  <div style={{ width: `${enginePct}%`, background: "var(--hot)", opacity: 0.8 }} />
+                </div>
+                <div className="faint" style={{ fontSize: 9, marginTop: 3 }}>set at the Helm</div>
+              </>
+            );
+          })()}
         </div>
       </div>
 
@@ -617,10 +643,10 @@ function Match({ view, roomId, conn, events, onLeave }) {
           </>
         )}
 
-        {/* top-left role + room readout */}
-        <div style={{ position: "absolute", top: 16, left: 20, pointerEvents: "none" }}>
+        {/* top-left role + room readout — shifts down when the attack banner shows */}
+        <div style={{ position: "absolute", top: (isAttacked && view.globalAttack?.warning) ? 56 : 16, left: 20, pointerEvents: "none", transition: "top 0.2s" }}>
           <div className="kanji" style={{ fontSize: 14, color: onEnergy ? "var(--volt)" : isImpostor ? "var(--violet)" : "var(--volt)" }}>{isImpostor ? "裏切者" : "乗員"}</div>
-          <div className="display" style={{ fontSize: 40, lineHeight: 0.85 }}>{room || "—"}</div>
+          <div className="display" style={{ fontSize: 40, lineHeight: 0.85 }}>{displayRoom || "—"}</div>
           <div className="row gap-s" style={{ alignItems: "center" }}>
             <span style={{ ...roleBadge, fontSize: 11, padding: "4px 10px", borderColor: onEnergy ? "var(--volt)" : isImpostor ? "var(--violet)" : "var(--volt)", color: onEnergy ? "var(--volt)" : isImpostor ? "var(--violet)" : "var(--volt)" }}>
               {onEnergy ? "DOWNED · ENERGY" : isImpostor ? "IMPOSTOR" : "CREW"}
@@ -632,7 +658,7 @@ function Match({ view, roomId, conn, events, onLeave }) {
 
         {/* hint + vote opener + comms */}
         <div style={{ position: "absolute", top: 14, right: 18, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
-          <div className="impactf faint" style={{ fontSize: 10, letterSpacing: "0.12em", pointerEvents: "none" }}>USE WASD TO MOVE • HOLD C FOR COMMS</div>
+          <div className="impactf faint" style={{ fontSize: 10, letterSpacing: "0.12em", pointerEvents: "none", opacity: 0.7 }}>build R20</div>
           <div className="row gap-s">
             <button className="btn" style={{ fontSize: 13, padding: "8px 14px", borderColor: "var(--volt)" }} onClick={() => { comms.setOpen(true); }}>声 COMMS</button>
             <button className="btn btn-hot" style={{ fontSize: 13, padding: "8px 16px" }} onClick={() => { setVoteOpen(true); }}>
@@ -676,6 +702,17 @@ function Match({ view, roomId, conn, events, onLeave }) {
 
           {(map.refillRooms || []).includes(room) && <button className="btn" style={hudBtn} onClick={act(() => conn.refill(roomId))}>Refill O₂</button>}
           {(map.repairRooms || []).includes(room) && <button className="btn" style={hudBtn} onClick={act(() => conn.repair(roomId))}>Repair</button>}
+          {room === "Airlock" && (
+            <button className="btn" style={{ ...hudBtn, borderColor: "var(--volt)" }}
+              onClick={act(() => conn.airlockDoor(roomId, !view.systems?.airlockDoorOpen))}>
+              {view.systems?.airlockDoorOpen ? "🔒 Close Airlock Door" : "🚪 Open Airlock Door"}
+            </button>
+          )}
+          {room === "Space" && (
+            <span className="faint" style={{ fontSize: 11, alignSelf: "center" }}>
+              {view.systems?.airlockDoorOpen ? "Door is open — get back inside!" : "⚠ Door sealed — you're stuck outside!"}
+            </span>
+          )}
           {(map.turretRooms || []).includes(room) && view.globalAttack && (
             <button 
               className="btn btn-hot" 
@@ -711,18 +748,35 @@ function Match({ view, roomId, conn, events, onLeave }) {
             </span>
           ))}
         </div>
+
+        {/* small corner minimap with a drop shadow so it reads over gameplay */}
+        <div style={{ position: "absolute", top: 14, right: 14, width: 150, height: 150, zIndex: 40,
+          filter: "drop-shadow(0 6px 14px rgba(0,0,0,0.7))", pointerEvents: "none" }}>
+          <MiniMap view={view} compact />
+        </div>
+        <div style={{ position: "absolute", top: 168, right: 14, zIndex: 40, fontSize: 10, color: "var(--dim)", fontFamily: "var(--impact)", letterSpacing: "0.1em", pointerEvents: "none" }}>
+          [M] FULL MAP
+        </div>
+
+        {/* M: full detailed map overlay */}
+        {mapOpen && (
+          <div style={{ position: "absolute", inset: 0, zIndex: 120, display: "grid", placeItems: "center", background: "rgba(5,4,9,0.78)", backdropFilter: "blur(3px)" }}
+            onClick={() => setMapOpen(false)}>
+            <div style={{ width: "min(78%, 720px)", aspectRatio: "1.3", maxHeight: "82%", padding: 18, background: "rgba(13,11,20,0.95)", border: "2px solid var(--gold)", boxShadow: "0 16px 60px rgba(0,0,0,0.8)" }}
+              onClick={(e) => e.stopPropagation()}>
+              <div className="row" style={{ justifyContent: "space-between", marginBottom: 10 }}>
+                <span className="display" style={{ fontSize: 22, color: "var(--gold)" }}>SHIP MAP</span>
+                <span className="faint" style={{ fontSize: 11 }}>[M] or [Esc] to close</span>
+              </div>
+              <div style={{ width: "100%", height: "calc(100% - 36px)" }}><MiniMap view={view} /></div>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* RIGHT: minimap */}
-      <div style={{ ...sidePane, borderLeft: "2px solid var(--line)", borderRight: "none" }}>
-        <MiniMap view={view} compact />
-        <div className="faint" style={{ fontSize: 12, marginTop: 14 }}>Use WASD to move. Walk into stations to use them, and into other pilots to act.</div>
-      </div>
     </div>
   );
 }
-
-// Win reasons -> human flavor text.
 const WIN_REASON_TEXT = {
   all_impostors_down: "Every impostor was ejected.",
   reached_location: "The crew reached the landing zone.",
@@ -850,7 +904,8 @@ const crewDot = { width: 14, height: 14, borderRadius: "50%", border: "2px solid
 const perkGrid = { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px,1fr))", gap: 12 };
 const perkCard = { padding: 16, textAlign: "left", background: "var(--ink-2)", cursor: "pointer" };
 const perkOn = { borderColor: "var(--hot)", boxShadow: "0 0 0 1px rgba(255,45,77,0.3)" };
-const sidePane = { background: "var(--ink-2)", borderRight: "2px solid var(--line)", padding: "22px 18px", overflowY: "auto" };
+const sidePane = { background: "transparent", padding: "22px 16px", overflowY: "auto", display: "flex", flexDirection: "column", gap: 4, pointerEvents: "none" };
+const leftCard = { background: "rgba(13,11,20,0.72)", border: "1px solid var(--line)", borderRadius: 6, padding: "12px 14px", marginBottom: 12, boxShadow: "0 6px 18px rgba(0,0,0,0.6)", backdropFilter: "blur(2px)", pointerEvents: "auto" };
 const gaugeTrack = { height: 12, background: "var(--ink)", border: "1px solid var(--line)", marginTop: 4, overflow: "hidden" };
 const gaugeFill = { height: "100%", transition: "width 0.4s ease" };
 const journeyTrack = { height: 14, background: "var(--ink)", border: "2px solid var(--line)", marginTop: 4, overflow: "hidden", clipPath: "polygon(0 0,100% 0,calc(100% - 6px) 100%,0 100%)" };
@@ -1010,7 +1065,9 @@ const incomingBannerStyle = {
 export function TurretMenu({ view, roomId, conn, onClose }) {
   const [activeShips, setActiveShips] = useState([]); // Array of { slot, expiresAt }
   const currentSpeed = view.systems?.engineSpeed ?? 0;
-  const lifetime = 3500 / (1 + currentSpeed);
+  // Ships stay on screen long enough to actually hit. Higher engine speed makes
+  // them a bit quicker, but never so fast you can't react (clamped 1.4s–3s).
+  const lifetime = Math.max(1400, 3000 - currentSpeed * 320);
 
   useEffect(() => {
     if (!view.globalAttack) {
@@ -1022,8 +1079,8 @@ export function TurretMenu({ view, roomId, conn, onClose }) {
       setActiveShips((ships) => {
         const now = Date.now();
         let updated = ships.filter((s) => s.expiresAt > now);
-
-        if (updated.length < 2 && Math.random() < 0.45) {
+        // Keep the grid lively: aim for 2-3 ships visible, spawn reliably.
+        if (updated.length < 3 && Math.random() < 0.7) {
           const activeSlots = new Set(updated.map((s) => s.slot));
           const emptySlots = [0, 1, 2, 3, 4, 5, 6, 7, 8].filter((i) => !activeSlots.has(i));
           if (emptySlots.length > 0) {
@@ -1033,7 +1090,7 @@ export function TurretMenu({ view, roomId, conn, onClose }) {
         }
         return updated;
       });
-    }, 250);
+    }, 400);
 
     return () => clearInterval(interval);
   }, [view.globalAttack, lifetime, onClose]);
@@ -1045,6 +1102,23 @@ export function TurretMenu({ view, roomId, conn, onClose }) {
     conn.shootTurret(roomId);
     setActiveShips((ships) => ships.filter((s) => s.slot !== slot));
   };
+
+  // Keyboard: QWE/ASD/ZXC map to the 3x3 grid, and the numpad (7-8-9 / 4-5-6 /
+  // 1-2-3) maps the same way so either hand works.
+  useEffect(() => {
+    const KEYMAP = {
+      KeyQ: 0, KeyW: 1, KeyE: 2, KeyA: 3, KeyS: 4, KeyD: 5, KeyZ: 6, KeyX: 7, KeyC: 8,
+      Numpad7: 0, Numpad8: 1, Numpad9: 2, Numpad4: 3, Numpad5: 4, Numpad6: 5, Numpad1: 6, Numpad2: 7, Numpad3: 8,
+    };
+    const onKey = (e) => {
+      const slot = KEYMAP[e.code];
+      if (slot === undefined) return;
+      e.preventDefault();
+      onWhack(slot);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [activeShips]); // eslint-disable-line
 
   const shipsLeft = view.globalAttack?.shipsLeft ?? 0;
 
@@ -1062,17 +1136,20 @@ export function TurretMenu({ view, roomId, conn, onClose }) {
         <div style={whackGridStyle}>
           {[0, 1, 2, 3, 4, 5, 6, 7, 8].map((i) => {
             const activeShip = activeShips.find((s) => s.slot === i);
+            const KEYS = ["Q", "W", "E", "A", "S", "D", "Z", "X", "C"];
             return (
               <div 
                 key={i} 
                 onClick={() => onWhack(i)}
                 style={{
                   ...gridSlotStyle,
+                  position: "relative",
                   borderColor: activeShip ? "var(--hot)" : "rgba(255,255,255,0.08)",
                   background: activeShip ? "rgba(255,42,71,0.12)" : "rgba(255,255,255,0.02)",
                   boxShadow: activeShip ? "0 0 16px rgba(255,42,71,0.25)" : "none"
                 }}
               >
+                <span style={{ position: "absolute", top: 3, left: 5, fontSize: 9, color: "rgba(255,255,255,0.3)", fontFamily: "var(--impact)" }}>{KEYS[i]}</span>
                 {activeShip && (
                   <span 
                     className="impactf" 

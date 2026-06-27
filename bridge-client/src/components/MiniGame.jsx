@@ -57,21 +57,32 @@ const GAME_LABELS = {
 /* ---------------- Pipe Router ---------------- */
 // A simple 3x3 grid where pipes must connect left to right
 function PipeRouter({ accent, onComplete }) {
-  // 0: straight (horizontal), 1: straight (vertical), 2: corner (L)
-  // We'll just do a simpler game: 4 pipes in a row, all must be horizontal.
+  // 4 pipes in a row, all must be horizontal (rot 0). Click a pipe OR press its
+  // number key (1-4) to rotate it.
   const [pipes, setPipes] = useState(() => Array.from({ length: 4 }, () => Math.floor(Math.random() * 3) + 1));
-  
+  const rotate = (i) => setPipes(p => { const np = [...p]; np[i] = (np[i] + 1) % 4; return np; });
+
   useEffect(() => {
     if (pipes.every(p => p === 0)) onComplete();
   }, [pipes]); // eslint-disable-line
+
+  useEffect(() => {
+    const onKey = (e) => {
+      const n = parseInt(e.key, 10);
+      if (n >= 1 && n <= pipes.length) { e.preventDefault(); rotate(n - 1); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [pipes.length]); // eslint-disable-line
 
   return (
     <div style={{ display: "flex", justifyContent: "center", gap: 10, padding: "20px 0", alignItems: "center" }}>
       <div style={{ width: 10, height: 10, background: accent, borderRadius: "50%", boxShadow: `0 0 10px ${accent}` }} />
       {pipes.map((rot, i) => (
-        <div key={i} onClick={() => setPipes(p => { const np = [...p]; np[i] = (np[i] + 1) % 4; return np; })}
+        <div key={i} onClick={() => rotate(i)}
           style={{ width: 40, height: 40, background: "var(--ink-3)", border: "2px solid var(--line)", cursor: "pointer", position: "relative", transform: `rotate(${rot * 90}deg)`, transition: "transform 0.15s ease-in-out" }}>
           <div style={{ position: "absolute", top: 17, left: 0, right: 0, height: 6, background: accent }} />
+          <span style={{ position: "absolute", bottom: -18, left: 0, right: 0, textAlign: "center", fontSize: 10, color: "var(--dim)", transform: `rotate(${-rot * 90}deg)` }}>{i + 1}</span>
         </div>
       ))}
       <div style={{ width: 10, height: 10, background: "var(--dim)", borderRadius: "50%" }} />
@@ -214,6 +225,13 @@ function FlappyStabilizer({ accent, onComplete }) {
   
   const tap = () => { vRef.current = 2.5; }; // Jump
 
+  // Spacebar acts as a click/tap.
+  useEffect(() => {
+    const onKey = (e) => { if (e.code === "Space") { e.preventDefault(); tap(); } };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   return (
     <div style={{ padding: "4px 10px" }} onMouseDown={tap}>
       <div style={{ position: "relative", height: 80, background: "var(--ink)", border: "1px solid var(--line)", marginBottom: 10, cursor: "pointer" }}>
@@ -225,7 +243,7 @@ function FlappyStabilizer({ accent, onComplete }) {
       <div style={{ height: 10, background: "var(--ink)", border: "1px solid var(--line)" }}>
         <div style={{ height: "100%", width: `${progress}%`, background: accent, transition: "width 0.1s" }} />
       </div>
-      <div className="impactf faint" style={{ textAlign: "center", fontSize: 10, marginTop: 6 }}>CLICK RAPIDLY TO STABILIZE</div>
+      <div className="impactf faint" style={{ textAlign: "center", fontSize: 10, marginTop: 6 }}>CLICK OR PRESS SPACE TO STABILIZE</div>
     </div>
   );
 }
@@ -254,7 +272,7 @@ function TurretShooter({ accent, onComplete }) {
   useEffect(() => { if (score >= 5) onComplete(); }, [score, onComplete]);
 
   const shoot = (ship, e) => {
-    e.stopPropagation();
+    if (e) e.stopPropagation();
     setScore(s => s + 1);
     setShips(prev => prev.filter(s => s.id !== ship.id));
     // explosion effect
@@ -262,6 +280,25 @@ function TurretShooter({ accent, onComplete }) {
     setExplosions(prev => [...prev, ex]);
     setTimeout(() => setExplosions(prev => prev.filter(e => e.id !== ex.id)), 500);
   };
+
+  // Spacebar shoots the oldest ship on screen (keyboard convenience).
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.code !== "Space") return;
+      e.preventDefault();
+      setShips((prev) => {
+        if (!prev.length) return prev;
+        const target = prev[0];
+        setScore((s) => s + 1);
+        const ex = { id: target.id, x: target.x, y: target.y };
+        setExplosions((p) => [...p, ex]);
+        setTimeout(() => setExplosions((p) => p.filter((e2) => e2.id !== ex.id)), 500);
+        return prev.slice(1);
+      });
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   return (
     <div style={{ position: 'relative', width: '100%', height: 200, background: 'radial-gradient(ellipse at 50% 50%, #0a0818 0%, #020108 100%)', border: '2px solid var(--line)', overflow: 'hidden', cursor: 'crosshair' }}>
@@ -305,6 +342,7 @@ const GAMES = {
   flux_route: TurretShooter, 
   phase_match: TargetTracking,
   turret_defense: TurretShooter,
+  spacewalk: TargetTracking,
 };
 
 const overlay = { position: "fixed", inset: 0, zIndex: 320, display: "grid", placeItems: "center", background: "rgba(5,4,9,0.8)", backdropFilter: "blur(4px)" };

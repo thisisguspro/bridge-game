@@ -261,6 +261,7 @@ io.on("connection", (socket) => {
   socket.on("refill", ({ roomId }) => act(roomId, (r, pid) => r.engine.refillOxygen(pid)));
   socket.on("set_engine_level", ({ roomId, level }) => act(roomId, (r, pid) => r.engine.setEngineLevel(pid, level)));
   socket.on("repair", ({ roomId }) => act(roomId, (r, pid) => r.engine.repairHull(pid)));
+  socket.on("airlock_door", ({ roomId, open }) => act(roomId, (r, pid) => r.engine.setAirlockDoor(pid, open)));
   socket.on("start_task", ({ roomId, taskId }) => act(roomId, (r, pid) => r.engine.startTask(pid, taskId)));
   socket.on("complete_task", ({ roomId, taskId }) => act(roomId, (r, pid) => r.engine.completeTask(pid, taskId)));
   socket.on("detach_cable", ({ roomId, targetId }) => {
