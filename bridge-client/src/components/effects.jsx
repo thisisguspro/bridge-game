@@ -23,28 +23,77 @@ export function useImpact() {
   return { pop, layer };
 }
 
-// A big kanji/word that slams in then fades — for level-ups, victories, etc.
-export function KanjiFlash({ text, sub, color = "var(--hot)", onDone }) {
-  useEffect(() => { const t = setTimeout(() => onDone && onDone(), 1600); return () => clearTimeout(t); }, [onDone]);
+// A massive anime sword slash effect that cuts across the screen
+export function SlashEffect({ active, onDone }) {
+  useEffect(() => {
+    if (!active) return;
+    const t = setTimeout(() => onDone && onDone(), 800);
+    return () => clearTimeout(t);
+  }, [active, onDone]);
+  if (!active) return null;
   return (
-    <div style={overlay} aria-live="assertive">
-      <div className="slam">
-        <div className="kanji" style={{ fontSize: "clamp(64px,16vw,200px)", color, lineHeight: 0.9, textShadow: "0 6px 0 rgba(0,0,0,0.5)" }}>{text}</div>
-        {sub && <div className="impactf" style={{ textAlign: "center", letterSpacing: "0.3em", marginTop: 10, color: "var(--paper)" }}>{sub}</div>}
-      </div>
+    <div style={{ position: "fixed", inset: 0, pointerEvents: "none", zIndex: 10000, overflow: "hidden" }}>
+      <div className="slash-cut" />
+      <div className="slash-sparks" />
       <style>{`
-        .slam { animation: slam 1.6s cubic-bezier(.2,.8,.2,1) forwards; text-align:center; }
-        @keyframes slam {
-          0% { transform: scale(2.4) rotate(-6deg); opacity: 0; filter: blur(8px); }
-          18% { transform: scale(1) rotate(-3deg); opacity: 1; filter: blur(0); }
-          70% { transform: scale(1.02) rotate(-3deg); opacity: 1; }
-          100% { transform: scale(1.1) rotate(-3deg); opacity: 0; }
+        .slash-cut {
+          position: absolute; top: 50%; left: -20%; width: 140%; height: 120px;
+          background: linear-gradient(0deg, transparent, rgba(255,255,255,1) 40%, rgba(255,255,255,1) 60%, transparent);
+          box-shadow: 0 0 50px var(--hot), 0 0 100px var(--hot);
+          transform: translateY(-50%) rotate(-25deg) scaleX(0);
+          animation: slash 0.3s cubic-bezier(0.1, 0.9, 0.2, 1) forwards;
+        }
+        @keyframes slash {
+          0% { transform: translateY(-50%) rotate(-25deg) scaleX(0); opacity: 0.8; }
+          40% { transform: translateY(-50%) rotate(-25deg) scaleX(1); opacity: 1; }
+          100% { transform: translateY(-50%) rotate(-25deg) scaleX(1) scaleY(0); opacity: 0; }
+        }
+        .slash-sparks {
+          position: absolute; inset: 0;
+          background: radial-gradient(circle at 50% 50%, var(--hot) 0%, transparent 40%);
+          mix-blend-mode: screen;
+          animation: sparks 0.4s ease-out forwards;
+        }
+        @keyframes sparks {
+          0% { opacity: 1; transform: scale(0.5); }
+          100% { opacity: 0; transform: scale(2); filter: blur(10px); }
         }
       `}</style>
     </div>
   );
 }
-const overlay = { position: "fixed", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9998, pointerEvents: "none" };
+
+// A big kanji/word that slams in then fades — for level-ups, victories, etc.
+// Enhanced with screen shake
+export function KanjiFlash({ text, sub, color = "var(--hot)", onDone }) {
+  useEffect(() => { const t = setTimeout(() => onDone && onDone(), 1600); return () => clearTimeout(t); }, [onDone]);
+  return (
+    <div style={overlay} aria-live="assertive">
+      <div className="slam screen-shake">
+        <div className="kanji" style={{ fontSize: "clamp(64px,16vw,200px)", color, lineHeight: 0.9, textShadow: "0 0 40px " + color + ", 0 10px 0 rgba(0,0,0,0.8)" }}>{text}</div>
+        {sub && <div className="impactf" style={{ textAlign: "center", letterSpacing: "0.3em", marginTop: 10, color: "var(--paper)", textShadow: "0 0 10px var(--hot)" }}>{sub}</div>}
+      </div>
+      <style>{`
+        .slam { animation: slam 1.6s cubic-bezier(.2,.8,.2,1) forwards; text-align:center; }
+        @keyframes slam {
+          0% { transform: scale(3) rotate(-15deg); opacity: 0; filter: blur(12px) brightness(2); }
+          15% { transform: scale(1) rotate(-3deg); opacity: 1; filter: blur(0) brightness(1.5); }
+          70% { transform: scale(1.05) rotate(-3deg); opacity: 1; filter: blur(0) brightness(1); }
+          100% { transform: scale(1.15) rotate(-3deg); opacity: 0; filter: blur(4px); }
+        }
+        .screen-shake {
+          animation: slam 1.6s cubic-bezier(.2,.8,.2,1) forwards, screenshake 0.4s ease-out;
+        }
+        @keyframes screenshake {
+          0%, 100% { margin-left: 0; margin-top: 0; }
+          10%, 30%, 50%, 70%, 90% { margin-left: -20px; margin-top: -15px; }
+          20%, 40%, 60%, 80% { margin-left: 20px; margin-top: 15px; }
+        }
+      `}</style>
+    </div>
+  );
+}
+const overlay = { position: "fixed", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9998, pointerEvents: "none", background: "radial-gradient(circle, rgba(0,0,0,0.7) 0%, transparent 80%)" };
 
 // Floating ember/particle field on a canvas — drifting upward motes for energy.
 export function Particles({ density = 40, color = "rgba(255,80,110,0.6)" }) {
@@ -75,34 +124,4 @@ export function Particles({ density = 40, color = "rgba(255,80,110,0.6)" }) {
     return () => { cancelAnimationFrame(raf); window.removeEventListener("resize", resize); };
   }, [density, color]);
   return <canvas ref={ref} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none", zIndex: 1 }} aria-hidden="true" />;
-}
-
-// Screen-shake hook: call shake() to jolt a wrapped element. Returns a style to
-// spread onto the container and the trigger fn. Heavy-flair for impactful events.
-export function useScreenShake() {
-  const [shaking, setShaking] = useState(false);
-  const shake = useCallback(() => { setShaking(false); requestAnimationFrame(() => setShaking(true)); }, []);
-  const style = shaking ? { animation: "screenshake 0.4s cubic-bezier(.36,.07,.19,.97)" } : undefined;
-  const onAnimationEnd = () => setShaking(false);
-  return { shake, style, onAnimationEnd };
-}
-
-// A one-shot sparkle burst at center screen (cel-style 4-point stars). Mount it
-// with a key to replay. Auto-cleans via onDone.
-export function SparkleBurst({ color = "var(--volt)", onDone }) {
-  useEffect(() => { const t = setTimeout(() => onDone && onDone(), 800); return () => clearTimeout(t); }, [onDone]);
-  const stars = Array.from({ length: 10 }, (_, i) => {
-    const ang = (i / 10) * Math.PI * 2, dist = 60 + (i % 3) * 40;
-    return { x: Math.cos(ang) * dist, y: Math.sin(ang) * dist, d: (i % 4) * 0.05 };
-  });
-  return (
-    <div style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 90, display: "grid", placeItems: "center" }} aria-hidden="true">
-      {stars.map((s, i) => (
-        <svg key={i} width="28" height="28" viewBox="0 0 24 24"
-          style={{ position: "absolute", animation: `sparkfly 0.8s ease-out ${s.d}s forwards`, ["--dx"]: `${s.x}px`, ["--dy"]: `${s.y}px` }}>
-          <path d="M12 0 L14 10 L24 12 L14 14 L12 24 L10 14 L0 12 L10 10 Z" fill={color} />
-        </svg>
-      ))}
-    </div>
-  );
 }

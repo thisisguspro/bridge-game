@@ -17,8 +17,21 @@ export default function MiniMap({ view, compact = false }) {
   const myRoom = view?.you?.room;
   const myTaskRooms = new Set((view?.you?.tasks || []).filter((t) => !t.done).map((t) => t.room));
 
-  // Deterministic layout: place the spawn at center, others on rings by BFS depth.
-  const pos = useMemo(() => layout(rooms, adjacency, map.spawnRoom), [rooms, adjacency, map.spawnRoom]);
+  // Use geometry positions if available so it matches the actual ship layout perfectly
+  const pos = useMemo(() => {
+    const out = {};
+    if (map.geometry?.rooms) {
+      const { worldW, worldH, rooms: gRooms } = map.geometry;
+      for (const [name, r] of Object.entries(gRooms)) {
+        out[name] = {
+          x: (r.x + r.w / 2) / (worldW || 1),
+          y: (r.y + r.h / 2) / (worldH || 1),
+        };
+      }
+      return out;
+    }
+    return layout(rooms, adjacency, map.spawnRoom);
+  }, [rooms, adjacency, map.spawnRoom, map.geometry]);
 
   const size = compact ? 230 : 360;
   const edges = useMemo(() => {

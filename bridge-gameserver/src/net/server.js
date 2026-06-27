@@ -256,22 +256,12 @@ io.on("connection", (socket) => {
   // ---- player actions: thin pass-throughs to the engine ----
   socket.on("move", ({ roomId, room }) => act(roomId, (r, pid) => r.engine.move(pid, room)));
   socket.on("set_destination", ({ roomId, x, y }) => act(roomId, (r, pid) => r.engine.setDestination(pid, x, y)));
+  socket.on("set_running", ({ roomId, running }) => act(roomId, (r, pid) => r.engine.setRunning(pid, running)));
   socket.on("allocate", ({ roomId, system, value }) => act(roomId, (r, pid) => r.engine.allocateEnergy(pid, system, value)));
   socket.on("refill", ({ roomId }) => act(roomId, (r, pid) => r.engine.refillOxygen(pid)));
-  socket.on("set_system", ({ roomId, system, on }) => act(roomId, (r, pid) => r.engine.setSystem(pid, system, on)));
+  socket.on("set_engine_level", ({ roomId, level }) => act(roomId, (r, pid) => r.engine.setEngineLevel(pid, level)));
   socket.on("repair", ({ roomId }) => act(roomId, (r, pid) => r.engine.repairHull(pid)));
   socket.on("start_task", ({ roomId, taskId }) => act(roomId, (r, pid) => r.engine.startTask(pid, taskId)));
-  socket.on("surrender", ({ roomId } = {}) => act(roomId, (r, pid) => r.engine.surrender(pid)));
-  socket.on("enter_turret", ({ roomId } = {}) => act(roomId, (r, pid) => r.engine.enterTurret(pid)));
-  socket.on("leave_turret", ({ roomId } = {}) => act(roomId, (r, pid) => { r.engine.leaveTurret(pid); return {}; }));
-  socket.on("shoot_plane", ({ roomId } = {}) => act(roomId, (r, pid) => r.engine.shootPlane(pid)));
-  socket.on("go_outside", ({ roomId } = {}) => act(roomId, (r, pid) => r.engine.goOutside(pid)));
-  socket.on("come_inside", ({ roomId } = {}) => act(roomId, (r, pid) => r.engine.comeInside(pid)));
-  socket.on("lock_airlock", ({ roomId } = {}) => act(roomId, (r, pid) => { r.engine.lockAirlock(pid); return {}; }));
-  socket.on("unlock_airlock", ({ roomId } = {}) => act(roomId, (r, pid) => { r.engine.unlockAirlock(pid); return {}; }));
-  socket.on("bang_door", ({ roomId } = {}) => act(roomId, (r, pid) => { r.engine.bangOnDoor(pid); return {}; }));
-  socket.on("solder_outside", ({ roomId } = {}) => act(roomId, (r, pid) => r.engine.solderOutside(pid)));
-  socket.on("set_allocation", ({ roomId, value } = {}) => act(roomId, (r, pid) => r.engine.setAllocation(pid, value)));
   socket.on("complete_task", ({ roomId, taskId }) => act(roomId, (r, pid) => r.engine.completeTask(pid, taskId)));
   socket.on("detach_cable", ({ roomId, targetId }) => {
     act(roomId, (r, pid) => r.engine.detachCable(pid, targetId));
@@ -285,17 +275,8 @@ io.on("connection", (socket) => {
   socket.on("resolve_sabotage", ({ roomId, kind }) => act(roomId, (r, pid) => r.engine.resolveSabotage(pid, kind)));
   socket.on("vote", ({ roomId, targetId }) => act(roomId, (r, pid) => r.engine.castVote(pid, targetId ?? null)));
   socket.on("voice_command", ({ roomId, command, targetId }) => act(roomId, (r, pid) => r.engine.sendVoiceCommand(pid, command, targetId ?? null)));
+  socket.on("shoot_turret", ({ roomId }) => act(roomId, (r, pid) => r.engine.shootTurretShip(pid)));
   socket.on("speech", ({ roomId, text }) => act(roomId, (r, pid) => r.engine.sendSpeech(pid, text ?? null)));
-  socket.on("emote", ({ roomId, emote }) => act(roomId, (r, pid) => r.engine.sendEmote(pid, emote)));
-  socket.on("report_player", ({ roomId, targetId, reason }) => {
-    act(roomId, (r, pid) => r.engine.reportPlayer(pid, targetId, reason));
-    const room = rooms.get(roomId);
-    if (room) for (const rep of room.engine.drainReports()) {
-      // Forward to the backend for moderation review (fire-and-forget).
-      try { if (typeof reportPlayerModeration === "function") reportPlayerModeration(rep); } catch { /* best-effort */ }
-      console.log("[moderation] player reported:", rep.targetName, "by", rep.reporterName, "—", rep.reason);
-    }
-  });
 
   socket.on("disconnect", () => {
     for (const room of rooms.rooms.values()) {

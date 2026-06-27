@@ -11,7 +11,6 @@ export default function VotePanel({ view, roomId, conn, onClose }) {
   const myVote = you.myVote || null;
   const living = (view.players || []).filter((p) => p.plane === "physical");
   const canVote = you.plane === "physical";
-  const [reportedIds, setReportedIds] = useState([]);
 
   // local ticking clock so the timer is smooth between server updates
   const [now, setNow] = useState(vote?.secondsIntoRound || 0);
@@ -61,25 +60,13 @@ export default function VotePanel({ view, roomId, conn, onClose }) {
         {living.map((p) => {
           const isMe = p.id === you.id;
           const voted = myVote === p.id;
-          const reported = reportedIds.includes(p.id);
           return (
-            <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <button disabled={!canVote || isMe} onClick={() => cast(p.id)}
-                style={{ ...rosterBtn, flex: 1, ...(voted ? rosterVoted : null), opacity: (!canVote || isMe) ? 0.5 : 1 }}>
-                <span style={{ ...dot, background: p.idColor?.hex || "var(--dim)" }} />
-                <span style={{ fontWeight: 700, fontSize: 13 }}>{p.name}{isMe ? " (you)" : ""}</span>
-                {voted && <span className="impactf" style={{ marginLeft: "auto", fontSize: 10, color: "var(--ink)" }}>VOTED</span>}
-              </button>
-              {!isMe && (
-                <button title={reported ? "Reported" : "Report this player"}
-                  disabled={reported}
-                  onClick={() => { conn.reportPlayer(roomId, p.id, "in-game report"); setReportedIds((r) => [...r, p.id]); }}
-                  style={{ flexShrink: 0, width: 34, height: 34, fontSize: 14, background: reported ? "var(--ink)" : "var(--ink-3)",
-                    border: `2px solid ${reported ? "var(--gold)" : "var(--line)"}`, color: reported ? "var(--gold)" : "var(--dim)", cursor: reported ? "default" : "pointer" }}>
-                  {reported ? "✓" : "⚑"}
-                </button>
-              )}
-            </div>
+            <button key={p.id} disabled={!canVote || isMe} onClick={() => cast(p.id)}
+              style={{ ...rosterBtn, ...(voted ? rosterVoted : null), opacity: (!canVote || isMe) ? 0.5 : 1 }}>
+              <span style={{ ...dot, background: p.idColor?.hex || "var(--dim)" }} />
+              <span style={{ fontWeight: 700, fontSize: 13 }}>{p.name}{isMe ? " (you)" : ""}</span>
+              {voted && <span className="impactf" style={{ marginLeft: "auto", fontSize: 10, color: "var(--ink)" }}>VOTED</span>}
+            </button>
           );
         })}
       </div>

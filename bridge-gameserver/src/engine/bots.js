@@ -61,16 +61,16 @@ function gotoToTask(engine, p) {
   stepToward(engine, p, rooms);
 }
 function commanderManage(engine, p) {
-  try { engine.setSystem(p.id, "oxygen", true); } catch {}
+  // Commander must be in the Helm room to adjust engine level
+  if (p.room !== 'Helm') {
+    steerTo(engine, p, 'Helm');
+    return;
+  }
   try {
     const hullPct = engine.hull / (engine.map.hullMax || 150);
-    const helm = engine.map.spawnRoom || "Helm";
-    const underThreat = engine.attack || engine.attackWarnUntil != null || hullPct < 0.45;
-    // Decide a target allocation: shields-heavy under threat / low hull, else cruise.
-    const want = underThreat ? 0.15 : (hullPct > 0.7 ? 0.85 : 0.5);
-    // Only the Helm can set it, so a bot that wants to change it heads there first.
-    if (p.room === helm) { engine.setAllocation(p.id, want); }
-    else if (underThreat) { stepToward(engine, p, [helm]); }
+    if (hullPct < 0.45) { engine.setEngineLevel(p.id, 0); } // 100% shields
+    else if (hullPct < 0.70) { engine.setEngineLevel(p.id, 2); } // mix
+    else { engine.setEngineLevel(p.id, 5); } // full engines
   } catch {}
 }
 function trySabotage(engine, imp) {
@@ -108,9 +108,15 @@ export function botStep(engine, p, tier, state) {
   if (p.oxygen < 35) { stepToward(engine, p, engine.map.refillRooms); try { engine.refillOxygen(p.id); } catch {} return; }
 
   if (isImp) {
-    if (Math.random() < T.sabotageChance) trySabotage(engine, p);
+    const isSabCdActive = engine.globalSabotageCdUntil != null && engine.now < engine.globalSabotageCdUntil;
+    if (!isSabCdActive && Math.random() < T.sabotageChance * 2) trySabotage(engine, p);
     const prey = sameRoomCrew(engine, p);
-    if (prey && canCable(engine, p)) { try { engine.detachCable(p.id, prey.id); return; } catch {} }
+    if (prey && canCable(engine, p)) {
+      const dist = Math.hypot(prey.x - p.x, prey.y - p.y);
+      if (dist <= 250) {
+        try { engine.detachCable(p.id, prey.id); return; } catch {}
+      }
+    }
     // higher tiers actively close on isolated crew; recruits mostly wander
     if (T.huntRadiusRooms > 0) {
       const target = engine._living().find((q) => q.role === ROLE.CREW &&
@@ -121,8 +127,51 @@ export function botStep(engine, p, tier, state) {
     return;
   }
 
+  // Voting phase: bots vote if they saw a murder, or very rarely at random.
+  // We do NOT return after voting, because voting is continuous in this game
+  // and they still need to move/task!
+  if (engine.voteRoundStartedAt > 0 && !engine.votes.has(p.id)) {
+    if (p.witnessedMurderer && engine._living().find(q => q.id === p.witnessedMurderer)) {
+      try { engine.castVote(p.id, p.witnessedMurderer); } catch {}
+    } else if (Math.random() < T.voteChance * 0.01) {
+      const others = engine._living().filter(q => q.id !== p.id);
+      if (others.length) {
+        try { engine.castVote(p.id, others[Math.floor(Math.random() * others.length)].id); } catch {}
+      }
+    }
+  }
+
   // CREW: resolve sabotage if standing on it, manage systems if commander, else task.
+  if (p.witnessedMurderer && Math.random() < 0.2) {
+    const imp = engine.players.get(p.witnessedMurderer);
+    if (imp) {
+      try { engine.chat(p.id, "I saw the sabotager!", [p.witnessedMurderer]); } catch {}
+    }
+  }
+
   if (tryResolve(engine, p)) return;
+
+  // Global attack response: crew bots prioritize turret rooms during active attacks
+  if (engine.globalAttack) {
+    const pastWarning = engine.now >= engine.globalAttack.warningUntil;
+    const turretRooms = engine.map.turretRooms || [];
+    if (turretRooms.length > 0) {
+      if (turretRooms.includes(p.room) && pastWarning) {
+        // Yield shooting priority to any human player in the same turret room
+        const humanInRoom = [...engine.players.values()].some(q => !q.isBot && q.room === p.room);
+        if (!humanInRoom) {
+          try { engine.shootTurretShip(p.id); } catch {}
+        }
+        return;
+      }
+      // Not in a turret room — head to one (unless commander needs the helm)
+      if (p.id !== engine.commanderId) {
+        stepToward(engine, p, turretRooms);
+        return;
+      }
+    }
+  }
+
   if (p.id === engine.commanderId) commanderManage(engine, p);
   if (!doNearbyTask(engine, p, tier)) gotoToTask(engine, p);
 }

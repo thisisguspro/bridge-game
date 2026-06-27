@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import * as api from "./api/backend.js";
+import { initAudio } from "./api/audio.js";
 import SignIn from "./screens/SignIn.jsx";
 import Hangar from "./screens/Hangar.jsx";
 import Locker from "./screens/Locker.jsx";
@@ -17,7 +18,7 @@ export default function App() {
   const [profile, setProfile] = useState(null);
   const [catalogue, setCatalogue] = useState(null);
   const [screen, setScreen] = useState("play");
-  const [matchActive, setMatchActive] = useState(false);
+  const [inRoom, setInRoom] = useState(false);
 
   const loadAll = useCallback(async () => {
     const [p, c] = await Promise.all([api.getProfile(), api.getCatalogue()]);
@@ -33,6 +34,11 @@ export default function App() {
       }
       setBooted(true);
     })();
+    
+    // Initialize audio on first click (browser policy)
+    const initSfx = () => { initAudio(); document.removeEventListener("click", initSfx); };
+    document.addEventListener("click", initSfx);
+    return () => document.removeEventListener("click", initSfx);
   }, [loadAll]);
 
   const onSignedIn = async (u) => { setUser(u); await loadAll(); setScreen("play"); };
@@ -43,7 +49,7 @@ export default function App() {
 
   return (
     <div style={{ height: "100%", display: "flex", background: "var(--ink)" }}>
-      {!matchActive && <NavRail screen={screen} setScreen={setScreen} user={user} profile={profile}
+      {!inRoom && <NavRail screen={screen} setScreen={setScreen} user={user} profile={profile}
         onSignOut={() => { api.signOut(); setUser(null); setProfile(null); }} />}
       <div style={{ flex: 1, position: "relative", overflow: "hidden" }}>
         {screen === "hangar" && <Hangar user={user} profile={profile} catalogue={catalogue} />}
@@ -51,7 +57,7 @@ export default function App() {
         {screen === "shop" && <Shop profile={profile} catalogue={catalogue} onChange={refreshProfile} />}
         {screen === "wheels" && <Wheels profile={profile} catalogue={catalogue} />}
         {screen === "settings" && <Settings />}
-        {screen === "play" && <Play user={user} profile={profile} onMatchActiveChange={setMatchActive} />}
+        {screen === "play" && <Play user={user} profile={profile} onRoomStatus={setInRoom} onChange={refreshProfile} />}
       </div>
     </div>
   );

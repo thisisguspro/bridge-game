@@ -80,12 +80,12 @@ export const memoryStore = {
     for (const u of users.values()) if (u.googleId === googleId) return u;
     return null;
   },
-  async createUser({ googleId, name, email, avatar }) {
+  async createUser({ googleId, name, email, avatar, password }) {
     const id = uid();
     // Bootstrap: the configured super-admin email always gets full power.
     const isSuper = !!email && email.toLowerCase() === config.superadminEmail.toLowerCase();
     const user = {
-      id, googleId, name, email, avatar,
+      id, googleId, name, email, avatar, password,
       balances: { CREDITS: 1000, PREMIUM: 0 }, // starter Credits
       xp: 0,
       level: 1,
@@ -95,7 +95,6 @@ export const memoryStore = {
       loadout: defaultLoadout(),// equipped per slot
       settings: structuredClone(DEFAULT_SETTINGS),
       wheels: defaultWheels(),  // emote + comms radial bindings
-      tosAccepted: false, tosAcceptedAt: null,
       createdAt: new Date().toISOString(),
     };
     users.set(id, user);
@@ -103,10 +102,6 @@ export const memoryStore = {
     // Grant the level-1 starter cosmetics so the kit is owned, not just defaulted.
     for (const cid of (LEVEL_UNLOCKS[1]?.grants || [])) user.cosmetics.add(cid);
     return user;
-  },
-  async setTosAccepted(id, val) {
-    const u = users.get(id); if (!u) return;
-    u.tosAccepted = !!val; u.tosAcceptedAt = new Date().toISOString();
   },
   async getUser(id) { return users.get(id) || null; },
 

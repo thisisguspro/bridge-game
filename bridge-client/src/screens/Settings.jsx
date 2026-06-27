@@ -33,7 +33,7 @@ export default function Settings() {
 
   if (!data) return <div style={wrap} />;
   const s = data.settings;
-  const sections = [["audio", "Audio", "音"], ["graphics", "Graphics", "画"], ["accessibility", "Accessibility", "易"], ["privacy", "Privacy", "秘"], ["controls", "Controls", "操"]];
+  const sections = [["audio", "Audio", "音"], ["graphics", "Graphics", "画"], ["accessibility", "Accessibility", "易"], ["controls", "Controls", "操"]];
 
   return (
     <div style={wrap}>
@@ -78,23 +78,13 @@ export default function Settings() {
           {section === "accessibility" && (
             <Cat title="Accessibility">
               <Toggle label="Colorblind ID Shapes" value={s.accessibility.colorblindShapes} onChange={(v) => patch("accessibility", "colorblindShapes", v)} />
-              <Toggle label="Show Color Names on Players" value={s.accessibility.colorblindLabels} onChange={(v) => patch("accessibility", "colorblindLabels", v)} />
               <Toggle label="High Contrast" value={s.accessibility.highContrast} onChange={(v) => patch("accessibility", "highContrast", v)} />
-              <Toggle label="Clearer Ghost / Downed Players" value={s.accessibility.ghostReadability} onChange={(v) => patch("accessibility", "ghostReadability", v)} />
               <Toggle label="Captions" value={s.accessibility.captionsEnabled} onChange={(v) => patch("accessibility", "captionsEnabled", v)} />
               <Select label="Caption Size" value={s.accessibility.captionSize} options={["small", "medium", "large"]} onChange={(v) => patch("accessibility", "captionSize", v)} />
               <Toggle label="Reduced Motion" value={s.accessibility.reducedMotion} onChange={(v) => patch("accessibility", "reducedMotion", v)} />
               <Toggle label="Hold To Confirm Risky Actions" value={s.accessibility.holdToConfirm} onChange={(v) => patch("accessibility", "holdToConfirm", v)} />
               <Toggle label="Show Gameplay Tips" value={s.accessibility.showTips} onChange={(v) => patch("accessibility", "showTips", v)} />
               <Toggle label="Show On-Screen Control Hints" value={s.accessibility.showControlHints} onChange={(v) => patch("accessibility", "showControlHints", v)} />
-            </Cat>
-          )}
-          {section === "privacy" && (
-            <Cat title="Privacy">
-              <Toggle label="Streamer Mode (hide join code)" value={s.privacy?.streamerMode} onChange={(v) => patch("privacy", "streamerMode", v)} />
-              <div className="faint" style={{ fontSize: 12, lineHeight: 1.5, marginTop: 4 }}>
-                Hides your lobby's join code so it won't leak on stream. A "Reveal" button shows it briefly when you need it. Anyone reading the on-screen code off your stream gets… a surprise. 😈
-              </div>
             </Cat>
           )}
           {section === "controls" && (

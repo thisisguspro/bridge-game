@@ -1,5 +1,5 @@
 import { GameEngine } from "./src/engine/GameEngine.js";
-import { PHASE, ROLE, PLANE, WINNER, OXYGEN, VOTE, HULL, SABOTAGE, DRAFT, PERKS, JOURNEY, ATTACK_WARNING_SECONDS } from "./src/engine/constants.js";
+import { PHASE, ROLE, PLANE, WINNER, OXYGEN, VOTE, HULL, SABOTAGE, DRAFT, PERKS, JOURNEY } from "./src/engine/constants.js";
 const SABOTAGE_RESOLVE = (k) => SABOTAGE[k].resolveRooms;
 
 let pass = 0, fail = 0;
@@ -9,32 +9,12 @@ function section(t) { console.log("\n## " + t); }
 // Tasks are now timed mini-games: start, let server time pass, then complete.
 // This helper does the full flow for tests (advances the engine clock past the
 // task's minSeconds via ticks, then completes).
-// Place a player firmly in a room: set room AND snap x/y to its center so the
-// continuous-movement tick (_roomAt) agrees and won't relocate them. Needed now
-// that named maps carry geometry (players have real positions). Falls back to a
-// plain room set for maps without geometry.
-function place(g, playerId, room) {
-  const p = g.players.get(playerId);
-  const rect = g.map.geometry?.rooms?.[room];
-  if (rect) {
-    // Use the engine's own free-point logic so the player isn't dropped inside a
-    // furniture blocker (which collision would then shove out of the room).
-    const xy = g._spawnXY ? g._spawnXY(room) : { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2 };
-    p.x = p.tx = xy.x; p.y = p.ty = xy.y;
-  }
-  p.room = room;
-}
-
 function doTask(g, playerId, taskId) {
   const p = g.players.get(playerId);
   const task = p.tasks.find((t) => t.id === taskId);
-  place(g, playerId, task.room);   // sit firmly in the task's room (free point)
   g.startTask(playerId, taskId);
   const need = (task.minSeconds || 12) + 1;
-  for (let s = 0; s < need; s++) {
-    g.tick(1);
-    place(g, playerId, task.room); // keep them parked while the timer runs
-  }
+  for (let s = 0; s < need; s++) g.tick(1);
   return g.completeTask(playerId, taskId);
 }
 
@@ -157,27 +137,16 @@ section("Tasks generate power into the pool");
   assert(r.power > before, "completing a task raises the power pool");
 }
 
-section("Helm allocation: engines<->shields slider ramps and trades speed for protection");
+section("Engines ON forces shields OFF (hard binary)");
 {
   const { g, crew } = startMatch(6);
-  // everyone spawns at the Helm, so the spawn-room allocation control is usable
-  const helm = g.map.spawnRoom;
-  place(g, crew[0], helm);
-  // push toward full shields
-  g.setAllocation(crew[0], 0);
-  assert(g.targetAllocation === 0, "target set toward shields");
-  // ramp it down over time (slowdown is quick, <=5s)
-  for (let i = 0; i < 6; i++) g.tick(1);
-  assert(g.allocation <= 0.05, "allocation ramps toward shields");
-  assert(g._shieldStrength() >= 0.9, "full shields => high shield strength");
-  // now push toward engines; speedup is slower (15s), so it shouldn't be instant
-  g.setAllocation(crew[0], 1);
-  g.tick(2);
-  assert(g.allocation < 0.5, "speedup is gradual, not instant");
-  // must be at the Helm to adjust
-  place(g, crew[0], g.map.reactorRoom || "Reactor");
-  let threw = false; try { g.setAllocation(crew[0], 0.5); } catch { threw = true; }
-  assert(threw, "allocation can only be set at the Helm");
+  g.setSystem(crew[0], "shields", true);
+  assert(g.viewFor(crew[0]).systems.shieldsUp === true, "shields up by default");
+  g.setSystem(crew[0], "engines", true);
+  assert(g.viewFor(crew[0]).systems.shieldsUp === false, "engaging engines drops shields");
+  let threw = false;
+  try { g.setSystem(crew[0], "shields", true); } catch { threw = true; }
+  assert(threw, "can't raise shields while engines run");
 }
 
 section("Continuous movement: players spawn with x/y and glide to a destination");
@@ -190,17 +159,12 @@ section("Continuous movement: players spawn with x/y and glide to a destination"
   assert(g.map.geometry && g.map.geometry.rooms[me.room], "map exposes room geometry");
   const adj = g.map.adjacency[me.room][0];
   const rect = g.map.geometry.rooms[adj];
-  // Move along the clear horizontal mid-lane (doors connect on the sides; the
-  // center row is kept free of furniture). Aim for the adjacent room's mid-left.
-  const tx = rect.x + rect.w * 0.5, ty = rect.y + rect.h * 0.5;
-  // first step out to our own room's door edge at mid-height, then into the room
-  g.setDestination(ids[0], me.x, rect.y + rect.h * 0.5);
-  for (let i = 0; i < 30; i++) g.tick(0.1);
+  const tx = rect.x + rect.w / 2, ty = rect.y + rect.h / 2;
   g.setDestination(ids[0], tx, ty);
-  for (let i = 0; i < 80; i++) g.tick(0.1);
+  for (let i = 0; i < 40; i++) g.tick(0.1);
   const p = g.players.get(ids[0]);
+  assert(Math.abs(p.x - tx) < 5 && Math.abs(p.y - ty) < 5, "player glided to the destination");
   assert(p.room === adj, "room is derived from the new position");
-  assert(Math.hypot(p.x - tx, p.y - ty) < 40 || p.room === adj, "player glided to the destination room");
 }
 
 section("Continuous movement: eliminated players don't move; legacy maps still teleport");
@@ -221,210 +185,6 @@ section("Continuous movement: eliminated players don't move; legacy maps still t
   const dest = g2.map.rooms.find((r) => r !== g2.players.get(a).room);
   g2.move(a, dest);
   assert(g2.players.get(a).room === dest, "legacy map move still teleports (no geometry)");
-}
-
-section("Attack warning: random attacks announce 10s ahead, then land");
-{
-  const g = new GameEngine({ mapId: "procedural", config: { players: 8 }, seed: 11 });
-  for (let i = 0; i < 8; i++) g.addPlayer("P" + i, { userId: "u" + i });
-  g.start();
-  // jump to just before a random attack is due
-  g.nextRandomAttackAt = g.now + 1;
-  g.tick(2); // crosses the threshold -> should be a WARNING, not an attack yet
-  assert(g.attackWarnUntil != null && g.attack == null, "random attack warns first");
-  for (let s = 0; s < ATTACK_WARNING_SECONDS + 1; s++) g.tick(1);
-  assert(g.attack != null, "attack lands after the warning window");
-}
-
-section("Helm slider: more shields = less hull damage during an attack");
-{
-  const mk = (alloc) => {
-    const g = new GameEngine({ mapId: "nebula_drift", config: { players: 6 } });
-    for (let i = 0; i < 6; i++) g.addPlayer("P" + i, { userId: "u" + i });
-    g.start(); g.power = 9999; g.hull = 100;
-    g.allocation = g.targetAllocation = alloc; // pin the slider
-    g.startAttack("test");
-    for (let i = 0; i < 12; i++) { g.power = 9999; g.tick(1); }
-    return g.hull;
-  };
-  const hullShielded = mk(0);   // all shields
-  const hullEngines = mk(1);    // all engines, exposed
-  assert(hullShielded > hullEngines, "full shields take less damage than full engines");
-}
-{
-  const g = new GameEngine({ mapId: "procedural", config: { players: 8 }, seed: 5 });
-  const ids = []; for (let i = 0; i < 8; i++) ids.push(g.addPlayer("P" + i, { userId: "u" + i }));
-  g.start();
-  const turret = g.map.turretRooms[0];
-  const crew = ids.find((id) => g.players.get(id).role === "crew");
-  place(g, crew, turret);
-  // only one occupant per turret
-  g.enterTurret(crew);
-  const other = ids.find((id) => id !== crew && g.players.get(id).role === "crew");
-  place(g, other, turret);
-  let blocked = false; try { g.enterTurret(other); } catch { blocked = true; }
-  assert(blocked, "a turret holds only one player at a time");
-  // start an attack and shoot the swarm down
-  g.startAttack("test");
-  assert(g.viewFor(crew).attack?.swarmSize === 20, "attack swarm is 20 planes");
-  let shots = 0;
-  while (g.attack && shots < 100) {
-    try { g.shootPlane(crew); } catch {}
-    g.now += 1; // clear the per-shot cooldown
-    shots++;
-  }
-  assert(g.attack === null, "downing the whole swarm ends the attack");
-  assert(g.viewFor(crew).planesDowned >= 20 || g.planesByPlayer[crew] >= 20, "shooter is credited with planes");
-}
-
-section("CALL_ATTACK sabotage summons a wave on its own cooldown");
-{
-  const { g, impostors } = startMatch(6, "nebula_drift", 31);
-  g.now = 60; g.tick(0);
-  g.triggerSabotage(impostors[0], "CALL_ATTACK");
-  // CALL_ATTACK now announces a warning first (10s lead), then the wave lands
-  assert(g.attackWarning != null || g.attackWarnUntil != null, "CALL_ATTACK raises an attack warning");
-  assert(g.viewFor(impostors[0]).attackWarning?.secondsLeft >= 1, "warning exposes a countdown");
-  for (let s = 0; s < ATTACK_WARNING_SECONDS + 1; s++) g.tick(1);
-  assert(g.attack && g.attack.source === "sabotage", "after the warning, the attack wave starts");
-  // its cooldown is separate from the normal sabotage gate
-  assert(g.callAttackCdUntil > g.now, "CALL_ATTACK sets its own cooldown");
-  // can still trigger a normal sabotage despite the attack (different gate) once global cd clears
-  g.globalSabotageCdUntil = 0;
-  let normalOk = true; try { g.triggerSabotage(impostors[0], "LIGHTS_OUT"); } catch { normalOk = false; }
-  assert(normalOk, "normal sabotage uses a different cooldown than CALL_ATTACK");
-}
-
-section("Airlock: go outside (oxygen drains faster), impostor lock traps, crew unlock rescues");
-{
-  const g = new GameEngine({ mapId: "procedural", config: { players: 8 }, seed: 7 });
-  const ids = []; for (let i = 0; i < 8; i++) ids.push(g.addPlayer("P" + i, { userId: "u" + i }));
-  g.start();
-  const airlock = g.map.airlockRoom;
-  const crew = ids.find((id) => g.players.get(id).role === "crew");
-  const imp = ids.find((id) => g.players.get(id).role === "impostor");
-  place(g, crew, airlock);
-  // go outside
-  g.goOutside(crew);
-  assert(g.players.get(crew).outside === true, "crew can step outside via the airlock");
-  // oxygen drains faster outside than inside
-  const before = g.players.get(crew).oxygen;
-  g.tick(2);
-  const outsideDrain = before - g.players.get(crew).oxygen;
-  // compare to an inside player's drain over the same time
-  const inside = ids.find((id) => id !== crew && id !== imp);
-  const inBefore = g.players.get(inside).oxygen; g.tick(2);
-  const insideDrain = inBefore - g.players.get(inside).oxygen;
-  assert(outsideDrain > insideDrain, "oxygen drains faster outside");
-  // impostor locks the door from inside -> trapped
-  place(g, imp, airlock);
-  g.lockAirlock(imp);
-  assert(g.airlockLocked === true, "impostor can lock the airlock");
-  let trapped = false; try { g.comeInside(crew); } catch { trapped = true; }
-  assert(trapped, "locked door traps the outside crew");
-  // bang for help -> distress visible to all living crew
-  g.bangOnDoor(crew);
-  assert(g.viewFor(inside).airlock.distress.some((d) => d.id === crew), "distress call is visible to crew");
-  // another crew unlocks -> rescued
-  place(g, inside, airlock);
-  g.unlockAirlock(inside);
-  assert(g.airlockLocked === false, "crew can unlock the airlock");
-  g.comeInside(crew);
-  assert(g.players.get(crew).outside === false, "rescued crew comes back inside");
-}
-
-section("Airlock: running out of air OUTSIDE is a permanent freeze (not the energy plane)");
-{
-  const g = new GameEngine({ mapId: "procedural", config: { players: 8 }, seed: 8 });
-  const ids = []; for (let i = 0; i < 8; i++) ids.push(g.addPlayer("P" + i, { userId: "u" + i }));
-  g.start();
-  const crew = ids.find((id) => g.players.get(id).role === "crew");
-  place(g, crew, g.map.airlockRoom);
-  g.goOutside(crew);
-  g.players.get(crew).oxygen = 2; // almost out
-  let guard = 0;
-  while (g.players.get(crew).plane !== "eliminated" && guard++ < 50 && g.phase === "active") g.tick(1);
-  assert(g.players.get(crew).plane === "eliminated", "out of air outside => eliminated, not energy plane");
-  assert(g.players.get(crew).frozen === true, "the death is flagged as frozen");
-}
-
-section("Emotes: broadcast to same-room players with a sound cue");
-{
-  const { g, crew } = startMatch(6, "nebula_drift", 44);
-  const a = crew[0], b = crew[1];
-  place(g, a, "Bridge"); place(g, b, "Bridge");
-  const before = g.events.length;
-  const r = g.sendEmote(a, "LAUGH");
-  const ev = g.events.slice(before).find((e) => e.type === "comm" && e.kind === "emote");
-  assert(!!ev, "emote produces a comm event");
-  assert(ev.emoji === "😂" && ev.sound === "emote_laugh", "emote carries emoji + sound cue");
-  assert(r.recipients.includes(b), "same-room player receives the emote");
-  let threw = false; try { g.sendEmote(a, "NOT_A_REAL_EMOTE"); } catch { threw = true; }
-  assert(threw, "unknown emote is rejected");
-}
-
-section("Living don't see ghosts, but see a corpse where they died");
-{
-  const { g, crew, impostors } = startMatch(6, "nebula_drift", 88);
-  const victim = crew[0], witness = crew[1];
-  // put victim + witness in same room, then down the victim
-  place(g, victim, "Bridge"); place(g, witness, "Bridge");
-  const vRoom = g.players.get(victim).room;
-  g._down(victim, "test");
-  const wv = g.viewFor(witness);
-  const ghostVisible = (wv.players || []).some((p) => p.id === victim);
-  assert(!ghostVisible, "living witness does NOT see the downed player as a ghost");
-  const corpseHere = (wv.corpses || []).some((c) => c.playerId === victim || c.name === g.players.get(victim).name);
-  // corpse carries name; match by name since id is corpse_*
-  const corpseByName = (wv.corpses || []).some((c) => c.name === g.players.get(victim).name);
-  assert(corpseByName, "living witness sees a corpse where the victim died");
-  // a witness in a DIFFERENT room should not see the corpse
-  const other = crew[2]; const otherRoom = g.players.get(other).room;
-  if (otherRoom !== g.players.get(victim).room) {
-    const ov = g.viewFor(other);
-    const sees = (ov.corpses || []).some((c) => c.name === g.players.get(victim).name);
-    assert(!sees, "a player in another room doesn't see the corpse");
-  }
-  // the ghost themselves still sees everyone (full sight)
-  const gv = g.viewFor(victim);
-  assert((gv.players || []).length >= 5, "ghost retains full sight of all players");
-}
-
-section("Player reports are recorded and drainable for moderation");
-{
-  const { g, crew } = startMatch(6, "nebula_drift", 77);
-  const a = crew[0], b = crew[1];
-  const r = g.reportPlayer(a, b, "bad name");
-  assert(r.ok, "report accepted");
-  let threwSelf = false; try { g.reportPlayer(a, a); } catch { threwSelf = true; }
-  assert(threwSelf, "cannot report yourself");
-  const dup = g.reportPlayer(a, b);
-  assert(dup.deduped, "duplicate report from same reporter is de-duped");
-  const drained = g.drainReports();
-  assert(drained.length === 1 && drained[0].targetId === b && drained[0].targetName, "report drained with target name");
-  assert(g.drainReports().length === 0, "reports cleared after drain");
-}
-
-section("Ghosts generate reduced task energy (half of living crew)");
-{
-  const { g, crew } = startMatch(6, "nebula_drift", 51);
-  const live = crew[0], ghost = crew[1];
-  const gainFromLastTask = () => {
-    const ev = [...g.events].reverse().find((e) => e.type === "power_generated");
-    return ev ? ev.amount : 0;
-  };
-  // living crew task
-  const lt = g.players.get(live).tasks[0];
-  g.power = 100; doTask(g, live, lt.id);
-  const liveGain = gainFromLastTask();
-  // down the other player; do an energy task
-  g.players.get(ghost).oxygen = 0.2; place(g, ghost, g.players.get(ghost).room); g.tick(1);
-  assert(g.players.get(ghost).plane === "energy", "second player downed to ghost");
-  const gt = g.players.get(ghost).tasks[0];
-  g.power = 100; doTask(g, ghost, gt.id);
-  const ghostGain = gainFromLastTask();
-  assert(ghostGain > 0 && ghostGain < liveGain, `ghost gain (${ghostGain}) positive but < living (${liveGain})`);
-  assert(Math.abs(ghostGain - liveGain * 0.5) <= 1, "ghost gain is ~50% of living");
 }
 
 section("Crew win by reaching the next location");
@@ -449,12 +209,11 @@ section("Hull destroyed => crew loss (impostors win)");
   const { g, crew } = startMatch(6, "nebula_drift", 8);
   g.power = 999;
   g.setSystem(crew[0], "engines", true); // engines => shields off => heavy damage
-  // Hull only takes damage during an attack wave now, so keep one running.
-  let guard = 0;
-  while (g.phase === "active" && guard++ < 2000) {
-    if (!g.attack) g.startAttack("test");
+  const hullTicks = Math.ceil((HULL.MAX / HULL.DMG_UNSHIELDED) * HULL.ATTACK_INTERVAL_SEC) + 30;
+  for (let i = 0; i < hullTicks && g.phase === "active"; i++) {
     g.tick(1);
-    if (g.distance > 0) g.distance = 0; // don't let the journey end first
+    // keep journey from completing first by holding distance back for this test
+    if (g.distance > 0) g.distance = 0;
   }
   assert(g.phase === "ended" && g.winner === WINNER.IMPOSTORS && g.hull === 0, "hull reaching 0 loses for crew");
 }
@@ -559,11 +318,14 @@ section("Timed mini-game tasks: must start, can't finish too fast, completes aft
   // completing without starting fails
   let threwNoStart = false; try { g.completeTask(c, t.id); } catch { threwNoStart = true; }
   assert(threwNoStart, "cannot complete a task that wasn't started");
-  // start, then finish immediately -> succeeds (no artificial wait; client gates
-  // completion by actually solving the mini-game)
+  // start, then try to finish instantly -> rejected (anti-cheat)
   g.startTask(c, t.id);
+  let threwFast = false; try { g.completeTask(c, t.id); } catch { threwFast = true; }
+  assert(threwFast, "cannot complete before the mini-game's minSeconds");
+  // let enough server time pass, then it completes
+  for (let s = 0; s < t.minSeconds + 1; s++) g.tick(1);
   const r = g.completeTask(c, t.id);
-  assert(r.counted === true, "task completes instantly once started + solved (no wait)");
+  assert(r.counted === true, "task completes once enough server time has elapsed");
 }
 
 section("Timed tasks: abandoning past the timeout requires a restart");
@@ -608,24 +370,21 @@ section("EMP needs a multi-location repair to clear");
   assert(g.viewFor(crew[0]).tasksFrozen === false, "EMP cleared after 3 resolvers in different rooms");
 }
 
-section("Same-room-only visibility: off-room players are obscured for everyone living");
+section("Lights Out dims crew view; impostors see normally");
 {
   const { g, impostors, crew } = startMatch(12, "ironhold_station", 15);
   g.now = 60; g.tick(0);
-  // place a crew member in a different room from another player
-  place(g, crew[0], "Bridge");
-  place(g, crew[1], "Cargo");
-  place(g, impostors[0], "Bridge");
+  // put a crew member in a different room from another player to test obscuring
+  g.move(crew[0], "Bridge");
+  g.move(crew[1], "Cargo");
+  g.triggerSabotage(impostors[0], "LIGHTS_OUT");
   const cv = g.viewFor(crew[0]);
   const otherFromCrew = cv.players.find((p) => p.id === crew[1]);
+  assert(cv.lightsOut === true, "view reports lightsOut");
   assert(otherFromCrew.obscured === true && otherFromCrew.room === null, "off-room player obscured for crew");
-  // impostor in Bridge also can't see the crew member over in Cargo (no x-ray)
   const iv = g.viewFor(impostors[0]);
   const otherFromImp = iv.players.find((p) => p.id === crew[1]);
-  assert(otherFromImp.obscured === true && otherFromImp.room === null, "impostor also can't see through walls");
-  // but a same-room player IS visible
-  const sameRoomForImp = iv.players.find((p) => p.id === crew[0]);
-  assert(sameRoomForImp.obscured === false && sameRoomForImp.room === "Bridge", "same-room player is visible");
+  assert(otherFromImp.obscured === false && otherFromImp.room === "Cargo", "impostor sees through the dark");
 }
 
 section("Attract Attackers amplifies damage and auto-expires");
@@ -637,9 +396,8 @@ section("Attract Attackers amplifies damage and auto-expires");
   g.triggerSabotage(impostors[0], "ATTRACT_ATTACKERS");
   assert(g.viewFor(crew[0]).positionLeaked === true, "view reports positionLeaked");
   const hullBefore = g.hull;
-  g.startAttack("test"); // damage only happens during a wave now
   // run a couple of accelerated attack intervals
-  for (let i = 0; i < 12; i++) { g.power = 999; g.tick(1); }
+  for (let i = 0; i < 10; i++) { g.power = 999; g.hull = Math.min(100, g.hull); g.tick(1); }
   assert(g.hull < hullBefore, "hull takes amplified damage while leaked");
   // run past the fuse; it should auto-clear (not end the match)
   for (let i = 0; i < 40 && g.phase === "active"; i++) { g.power = 999; g.hull = 100; g.tick(1); }
@@ -847,8 +605,7 @@ section("Host config: overrides drive the engine and compound with perks");
   fast.start();
   fast.power = 999; fast.setSystem(fast.commanderId, "engines", true); // shields off => unshielded hits
   const hullBefore = fast.hull;
-  fast.startAttack("test"); // hull damage only during a wave
-  for (let i = 0; i < 14; i++) { fast.power = 999; fast.tick(1); }
+  for (let i = 0; i < 12; i++) { fast.power = 999; fast.tick(1); }
   assert(fast.hull < hullBefore, "config attack multipliers damage the hull");
 
   // oxygenDrainMult compounds with the LONGER_OXYGEN perk.
@@ -997,15 +754,12 @@ section("KotH: solo holder scores faster than when shared");
   const ids = []; for (let i = 0; i < 6; i++) ids.push(g.addPlayer("P" + i, { userId: "u" + i }));
   g.start();
   const hill = g.kothRoom;
-  // One player solo on the hill; everyone else parked in a different real room.
-  const offHill = g.map.rooms.find((r) => r !== hill) || hill;
-  ids.forEach((id, i) => { place(g, id, i === 0 ? hill : offHill); });
-  // ensure the non-hill players aren't counted as on the hill
-  ids.forEach((id, i) => { if (i !== 0 && g.players.get(id).room === hill) place(g, id, offHill); });
+  // One player solo on the hill for 10s.
+  ids.forEach((id, i) => { g.players.get(id).room = (i === 0 ? hill : "nowhere_" + i); });
   g.tick(10);
   const solo = g.players.get(ids[0]).kothScore;
   // Now two players share for 10s.
-  place(g, ids[1], hill);
+  g.players.get(ids[1]).room = hill;
   const beforeShared = g.players.get(ids[1]).kothScore;
   g.tick(10);
   const sharedGain = g.players.get(ids[1]).kothScore - beforeShared;

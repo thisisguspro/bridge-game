@@ -22,7 +22,7 @@ export const SLOTS = {
   weapon:     { key: "weapon",     label: "Tool",         alwaysFilled: true,  unlockLevel: 1,  default: "tool_multitool" }, // NEVER carries idColor — kept neutral so prestige skins (e.g. golden event weapons) stay purely cosmetic, not an identity tell
   bandana:    { key: "bandana",    label: "Bandana",      alwaysFilled: false, unlockLevel: 2 }, // now a pure cosmetic, not an identifier
   headpiece:  { key: "headpiece",  label: "Headpiece",    alwaysFilled: false, unlockLevel: 2 },
-  body:       { key: "body",       label: "Costume",      alwaysFilled: false, unlockLevel: 3 },
+  body:       { key: "body",       label: "Costume",      alwaysFilled: false, unlockLevel: 1 },
   shoes:      { key: "shoes",      label: "Shoes",        alwaysFilled: false, unlockLevel: 5 },
   belt:       { key: "belt",       label: "Belt",         alwaysFilled: false, unlockLevel: 6 },
   border:     { key: "border",     label: "Profile Border", alwaysFilled: false, unlockLevel: 7 },
@@ -61,9 +61,9 @@ export const COSMETICS = {
   head_halo:    { id: "head_halo",    slot: "headpiece", name: "Spirit Halo",   rarity: "Legendary", source: "box" },
 
   // Bodies / costumes
-  body_jumpsuit: { id: "body_jumpsuit", slot: "body", name: "Crew Jumpsuit",   rarity: "Common", source: "level" },
-  body_mecha:    { id: "body_mecha",    slot: "body", name: "Mecha Frame",     rarity: "Epic",   source: "box" },
-  body_ronin:    { id: "body_ronin",    slot: "body", name: "Celestial Ronin", rarity: "Legendary", source: "box" },
+  body_jumpsuit: { id: "body_jumpsuit", slot: "body", name: "Crew Jumpsuit",   rarity: "Common", source: "starter" },
+  body_mecha:    { id: "body_mecha",    slot: "body", name: "Mecha Frame",     rarity: "Epic",   source: "starter" },
+  body_ronin:    { id: "body_ronin",    slot: "body", name: "Celestial Ronin", rarity: "Legendary", source: "starter" },
 
   // Shoes
   shoes_boots:  { id: "shoes_boots",  slot: "shoes", name: "Mag Boots",     rarity: "Common", source: "level" },
@@ -104,9 +104,9 @@ export function levelForXp(xp) {
 // then slots open one at a time, with a perk unlock woven in. "approve/tweak"
 // territory — change freely.
 export const LEVEL_UNLOCKS = {
-  1:  { slots: ["breather", "oxygenTank", "weapon"], grants: ["breather_standard", "tank_standard", "tool_multitool"], note: "Starter kit — your breather, O2 tank, and multitool (all always visible; their color IDs you)." },
+  1:  { slots: ["breather", "oxygenTank", "weapon", "body"], grants: ["breather_standard", "tank_standard", "tool_multitool", "body_jumpsuit", "body_mecha", "body_ronin"], note: "Starter kit — your breather, O2 tank, multitool, and basic costumes." },
   2:  { slots: ["bandana", "headpiece"], grants: ["bandana_standard", "head_cap"], note: "Bandana + headpiece slots unlocked." },
-  3:  { slots: ["body"], grants: ["body_jumpsuit"], note: "Costume slot unlocked." },
+  3:  { note: "Level 3 reached." },
   4:  { grants: ["tank_finned"], note: "A new O2 tank skin." },
   5:  { slots: ["shoes"], grants: ["shoes_boots"], perks: ["LONGER_OXYGEN"], note: "Shoes slot + first perk available in drafts." },
   6:  { slots: ["belt"], grants: ["belt_utility"], note: "Belt slot unlocked." },
@@ -135,5 +135,5 @@ export function unlockedAt(level) {
 
 // Default loadout for a brand-new account.
 export function defaultLoadout() {
-  return { breather: "breather_standard", oxygenTank: "tank_standard", weapon: "tool_multitool" };
+  return { breather: "breather_standard", oxygenTank: "tank_standard", weapon: "tool_multitool", body: "body_jumpsuit" };
 }

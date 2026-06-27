@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import IsoPilot from "./IsoPilot.jsx";
-import { EmoteBubble } from "./Emotes.jsx";
 
 // Isometric playfield. Projects world (x,y) into angled 2.5D screen space, draws
 // the station floor (rooms as diamonds, corridors between them) on a canvas, and
@@ -10,46 +9,46 @@ import { EmoteBubble } from "./Emotes.jsx";
 // motion looks smooth.
 //
 // Iso projection: screen = ( (x - y) * COS, (x + y) * SIN ) — classic 2:1 iso.
-const ISO = { cos: 0.86, sin: 0.5, scale: 1.05 };
+const ISO = { cos: 0.86, sin: 0.5, scale: 0.62 };
 function toScreen(wx, wy) { return { sx: (wx - wy) * ISO.cos * ISO.scale, sy: (wx + wy) * ISO.sin * ISO.scale }; }
-
-// ---- Room art image cache ----
-// Each room TYPE may have a top-down art PNG at /assets/rooms/<slug>.png. We load
-// it lazily, once, and remember success/failure so the renderer can fall back to
-// the drawn diamond when art is missing (the game stays fully playable with zero
-// art files present — art is purely additive). Drop files into the client's
-// public/assets/rooms/ folder (see the art template guide) and they appear here.
-const roomImgCache = {}; // slug -> { img, status: 'loading'|'ok'|'fail' }
-function roomSlug(name) {
-  return name.replace(/\s+\d+$/, "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
-}
-function getRoomImage(name) {
-  const slug = roomSlug(name);
-  let entry = roomImgCache[slug];
-  if (!entry) {
-    entry = roomImgCache[slug] = { img: new Image(), status: "loading" };
-    entry.img.onload = () => { entry.status = "ok"; };
-    entry.img.onerror = () => { entry.status = "fail"; };
-    entry.img.src = `/assets/rooms/${slug}.png`;
-  }
-  return entry;
+function toWorld(sx, sy) {
+  // invert the projection
+  const a = sx / (ISO.cos * ISO.scale), b = sy / (ISO.sin * ISO.scale);
+  return { wx: (a + b) / 2, wy: (b - a) / 2 };
 }
 
-export default function IsoStage({ view, emoteBubbles = {} }) {
+const TEXTURES = {
+  "Helm": "./textures/room_helm.png",
+  "Engineering": "./textures/room_engineering.png",
+  "Sensors": "./textures/room_sensors.png",
+  "Reactor": "./textures/room_reactor.png",
+  "Medbay": "./textures/room_medbay.png",
+  "Cargo": "./textures/room_cargo.png",
+  "Hangar": "./textures/room_hangar.png",
+  "Comms Array": "./textures/room_comms.png",
+  "Labs": "./textures/room_labs.png",
+  "Galley": "./textures/room_galley.png",
+  "Storage": "./textures/room_storage.png",
+  "Airlock": "./textures/room_airlock.png",
+  "Space": "./textures/room_space.png",
+  "Turret": "./textures/room_turret.png",
+  "Corridor": "./textures/room_corridor.png",
+};
+const IMG_CACHE = {};
+if (typeof Image !== "undefined") {
+  Object.entries(TEXTURES).forEach(([k, v]) => {
+    const img = new Image();
+    img.src = v;
+    IMG_CACHE[k] = img;
+  });
+}
+
+export default function IsoStage({ view, showColorblind = false }) {
   const geo = view?.map?.geometry;
   const canvasRef = useRef(null);
   const wrapRef = useRef(null);
   const [dims, setDims] = useState({ w: 800, h: 600 });
-  // accessibility prefs that affect player rendering (symbols + labels)
-  const [a11y, setA11y] = useState({ colorblindShapes: true, colorblindLabels: false, ghostReadability: true });
-  useEffect(() => {
-    import("../api/backend.js").then((api) => api.getSettings?.()
-      .then((s) => s?.accessibility && setA11y({
-        colorblindShapes: s.accessibility.colorblindShapes !== false,
-        colorblindLabels: !!s.accessibility.colorblindLabels,
-        ghostReadability: s.accessibility.ghostReadability !== false,
-      })).catch(() => {})).catch(() => {});
-  }, []);
+  // No longer using external images for floor/wall, using bright vectors instead.
 
   // Smooth interpolation: keep a local render-position per player that eases
   // toward the authoritative server position each animation frame.
@@ -107,204 +106,463 @@ export default function IsoStage({ view, emoteBubbles = {} }) {
     ctx.clearRect(0, 0, dims.w, dims.h);
     const { ox, oy } = camera();
 
-    // corridors first (thick connecting bands)
-    ctx.lineCap = "round";
-    for (const [a, b] of geo.corridors) {
-      const ra = geo.rooms[a], rb = geo.rooms[b]; if (!ra || !rb) continue;
-      const ca = toScreen(ra.x + ra.w / 2, ra.y + ra.h / 2);
-      const cb = toScreen(rb.x + rb.w / 2, rb.y + rb.h / 2);
-      ctx.strokeStyle = "rgba(80,72,104,0.55)"; ctx.lineWidth = 20;
-      ctx.beginPath(); ctx.moveTo(ca.sx + ox, ca.sy + oy); ctx.lineTo(cb.sx + ox, cb.sy + oy); ctx.stroke();
-      ctx.strokeStyle = "rgba(40,36,58,0.9)"; ctx.lineWidth = 13;
-      ctx.beginPath(); ctx.moveTo(ca.sx + ox, ca.sy + oy); ctx.lineTo(cb.sx + ox, cb.sy + oy); ctx.stroke();
-    }
-
-    // rooms as iso diamonds
+    // -- 1) DRAW ROOM FLOORS --
     const refill = new Set(view.map.refillRooms || []);
     const turret = new Set(view.map.turretRooms || []);
     const repair = new Set(view.map.repairRooms || []);
     const myRoom = view.you?.room;
+    
     for (const [name, r] of Object.entries(geo.rooms)) {
+      const here = name === myRoom;
+      const texKey = name.startsWith("Turret") ? "Turret" : (name.startsWith("Corridor") || name.includes("Junction") ? "Corridor" : name);
+      const img = IMG_CACHE[texKey] || IMG_CACHE["Storage"];
+      
+      ctx.save();
       const c = [
         toScreen(r.x, r.y), toScreen(r.x + r.w, r.y),
         toScreen(r.x + r.w, r.y + r.h), toScreen(r.x, r.y + r.h),
       ].map((p) => ({ x: p.sx + ox, y: p.sy + oy }));
-      const here = name === myRoom;
-      // clip to the room diamond
-      ctx.save();
+      
       ctx.beginPath(); ctx.moveTo(c[0].x, c[0].y);
       for (let i = 1; i < 4; i++) ctx.lineTo(c[i].x, c[i].y); ctx.closePath();
-
-      const art = getRoomImage(name);
-      if (art.status === "ok" && art.img.width) {
-        // Map the square art onto the iso parallelogram via an affine transform.
-        // Top-left=c[0], top-right=c[1], bottom-left=c[3]. Image is art.img.width sq.
-        ctx.clip();
-        const iw = art.img.width, ih = art.img.height;
-        const ax = (c[1].x - c[0].x) / iw, ay = (c[1].y - c[0].y) / iw; // image x-axis
-        const bx = (c[3].x - c[0].x) / ih, by = (c[3].y - c[0].y) / ih; // image y-axis
-        ctx.setTransform(window.devicePixelRatio || 1, 0, 0, window.devicePixelRatio || 1, 0, 0);
-        ctx.transform(ax, ay, bx, by, c[0].x, c[0].y);
-        ctx.drawImage(art.img, 0, 0);
-        ctx.setTransform(window.devicePixelRatio || 1, 0, 0, window.devicePixelRatio || 1, 0, 0);
+      
+      if (img && img.complete && img.naturalWidth) {
+        ctx.save();
+        ctx.clip(); // clip to the exact floor diamond
+        
+        ctx.translate(ox, oy);
+        ctx.transform(ISO.cos * ISO.scale, ISO.sin * ISO.scale, -ISO.cos * ISO.scale, ISO.sin * ISO.scale, 0, 0);
+        
+        // Draw the continuous floor texture! No holes.
+        ctx.drawImage(img, r.x, r.y, r.w, r.h);
+        
+        if (here) { ctx.fillStyle = "rgba(255, 200, 61, 0.1)"; ctx.fillRect(r.x, r.y, r.w, r.h); }
+        else { ctx.fillStyle = "rgba(0, 0, 0, 0.4)"; ctx.fillRect(r.x, r.y, r.w, r.h); }
         ctx.restore();
-        // highlight ring for your current room
-        if (here) {
-          ctx.beginPath(); ctx.moveTo(c[0].x, c[0].y);
-          for (let i = 1; i < 4; i++) ctx.lineTo(c[i].x, c[i].y); ctx.closePath();
-          ctx.strokeStyle = "rgba(255,45,77,0.8)"; ctx.lineWidth = 2.5; ctx.stroke();
-        }
       } else {
-        // Rich placeholder ship-deck floor (until room art PNGs are added):
-        // checkerboard deck plating with recessed seams (shadow+highlight edges),
-        // hazard chevrons along one edge, corner rivets, and a center service
-        // hatch — so it reads as a real deck rather than a flat diamond.
-        ctx.fillStyle = here ? "#241d33" : "#17131f"; ctx.fill();
+        ctx.fillStyle = here ? "rgba(255, 200, 61, 0.2)" : "#1a1525";
+        ctx.fill();
         ctx.save();
         ctx.clip();
-        const TILE = 56;
-        // helper to convert a world rect corner set to screen + draw a filled iso quad
-        const quad = (x0, y0, x1, y1, fill) => {
-          const a = toScreen(x0, y0), b = toScreen(x1, y0), c2 = toScreen(x1, y1), d = toScreen(x0, y1);
-          ctx.beginPath();
-          ctx.moveTo(a.sx + ox, a.sy + oy); ctx.lineTo(b.sx + ox, b.sy + oy);
-          ctx.lineTo(c2.sx + ox, c2.sy + oy); ctx.lineTo(d.sx + ox, d.sy + oy); ctx.closePath();
-          ctx.fillStyle = fill; ctx.fill();
-        };
-        // checkerboard plating
-        let row = 0;
-        for (let gy = 0; gy < r.h; gy += TILE) {
-          let col = 0;
-          for (let gx = 0; gx < r.w; gx += TILE) {
-            const dark = (row + col) % 2 === 0;
-            const w = Math.min(TILE, r.w - gx), h = Math.min(TILE, r.h - gy);
-            quad(r.x + gx, r.y + gy, r.x + gx + w, r.y + gy + h,
-              dark ? (here ? "rgba(255,255,255,0.018)" : "rgba(255,255,255,0.012)")
-                   : (here ? "rgba(0,0,0,0.16)" : "rgba(0,0,0,0.22)"));
-            col++;
-          }
-          row++;
+        ctx.strokeStyle = "rgba(0, 240, 255, 0.15)"; ctx.lineWidth = 1;
+        for (let i = r.x; i < r.x + r.w; i += 120) {
+          const p1 = toScreen(i, r.y), p2 = toScreen(i, r.y + r.h);
+          ctx.beginPath(); ctx.moveTo(p1.sx + ox, p1.sy + oy); ctx.lineTo(p2.sx + ox, p2.sy + oy); ctx.stroke();
         }
-        // recessed seams: a dark line + a 1px highlight to fake bevel
-        for (let gx = 0; gx <= r.w; gx += TILE) {
-          const p0 = toScreen(r.x + gx, r.y), p1 = toScreen(r.x + gx, r.y + r.h);
-          ctx.strokeStyle = "rgba(0,0,0,0.4)"; ctx.lineWidth = 2;
-          ctx.beginPath(); ctx.moveTo(p0.sx + ox, p0.sy + oy); ctx.lineTo(p1.sx + ox, p1.sy + oy); ctx.stroke();
-          ctx.strokeStyle = "rgba(180,170,210,0.05)"; ctx.lineWidth = 1;
-          ctx.beginPath(); ctx.moveTo(p0.sx + ox + 1.5, p0.sy + oy + 1); ctx.lineTo(p1.sx + ox + 1.5, p1.sy + oy + 1); ctx.stroke();
+        for (let j = r.y; j < r.y + r.h; j += 120) {
+          const p1 = toScreen(r.x, j), p2 = toScreen(r.x + r.w, j);
+          ctx.beginPath(); ctx.moveTo(p1.sx + ox, p1.sy + oy); ctx.lineTo(p2.sx + ox, p2.sy + oy); ctx.stroke();
         }
-        for (let gy = 0; gy <= r.h; gy += TILE) {
-          const p0 = toScreen(r.x, r.y + gy), p1 = toScreen(r.x + r.w, r.y + gy);
-          ctx.strokeStyle = "rgba(0,0,0,0.4)"; ctx.lineWidth = 2;
-          ctx.beginPath(); ctx.moveTo(p0.sx + ox, p0.sy + oy); ctx.lineTo(p1.sx + ox, p1.sy + oy); ctx.stroke();
-          ctx.strokeStyle = "rgba(180,170,210,0.05)"; ctx.lineWidth = 1;
-          ctx.beginPath(); ctx.moveTo(p0.sx + ox, p0.sy + oy + 1.5); ctx.lineTo(p1.sx + ox, p1.sy + oy + 1.5); ctx.stroke();
-        }
-        // hazard chevrons along the top-left edge (a warning stripe band)
-        const bandW = 26;
-        for (let s = 0; s < r.h; s += 26) {
-          const q0 = toScreen(r.x, r.y + s), q1 = toScreen(r.x + bandW, r.y + s);
-          const q2 = toScreen(r.x + bandW, r.y + s + 13), q3 = toScreen(r.x, r.y + s + 13);
-          ctx.beginPath(); ctx.moveTo(q0.sx + ox, q0.sy + oy); ctx.lineTo(q1.sx + ox, q1.sy + oy);
-          ctx.lineTo(q2.sx + ox, q2.sy + oy); ctx.lineTo(q3.sx + ox, q3.sy + oy); ctx.closePath();
-          ctx.fillStyle = (Math.floor(s / 26) % 2) ? "rgba(255,200,61,0.10)" : "rgba(0,0,0,0.18)"; ctx.fill();
-        }
-        // center service hatch (two concentric iso ellipses)
-        const cc = toScreen(r.x + r.w / 2, r.y + r.h / 2);
-        const rx = r.w * ISO.cos * ISO.scale * 0.22, ry = r.h * ISO.sin * ISO.scale * 0.22;
-        ctx.strokeStyle = here ? "rgba(255,45,77,0.18)" : "rgba(120,110,150,0.14)"; ctx.lineWidth = 4;
-        ctx.beginPath(); ctx.ellipse(cc.sx + ox, cc.sy + oy, rx, ry, 0, 0, Math.PI * 2); ctx.stroke();
-        ctx.lineWidth = 1.5;
-        ctx.beginPath(); ctx.ellipse(cc.sx + ox, cc.sy + oy, rx * 0.6, ry * 0.6, 0, 0, Math.PI * 2); ctx.stroke();
-        // corner rivets
-        const rivet = (fx, fy) => {
-          const p = toScreen(r.x + fx * r.w, r.y + fy * r.h);
-          ctx.fillStyle = "rgba(180,170,210,0.18)";
-          ctx.beginPath(); ctx.arc(p.sx + ox, p.sy + oy, 2.2, 0, Math.PI * 2); ctx.fill();
-        };
-        [[0.08, 0.12], [0.92, 0.12], [0.08, 0.88], [0.92, 0.88]].forEach(([fx, fy]) => rivet(fx, fy));
-        ctx.restore();
-        // room outline
-        ctx.beginPath(); ctx.moveTo(c[0].x, c[0].y);
-        for (let i = 1; i < 4; i++) ctx.lineTo(c[i].x, c[i].y); ctx.closePath();
-        ctx.strokeStyle = here ? "rgba(255,45,77,0.8)" : "rgba(120,110,150,0.55)";
-        ctx.lineWidth = here ? 3 : 2; ctx.stroke();
         ctx.restore();
       }
-      // room label
-      const ctr = toScreen(r.x + r.w / 2, r.y + r.h / 2);
-      ctx.fillStyle = art.status === "ok" ? "#f7f3e9" : (here ? "#f7f3e9" : "#6f6688");
-      ctx.font = "600 11px Rajdhani, sans-serif"; ctx.textAlign = "center";
-      // a subtle shadow so labels read over art
-      if (art.status === "ok") { ctx.fillStyle = "rgba(0,0,0,0.6)"; ctx.fillText(name, ctr.sx + ox + 1, ctr.sy + oy - 3); ctx.fillStyle = "#f7f3e9"; }
-      ctx.fillText(name, ctr.sx + ox, ctr.sy + oy - 4);
-      // station glyphs
+      ctx.restore();
+    }
+
+    // time-based animation for stars
+    const t = Date.now() / 1000;
+    const engineSpeed = view.engine?.helmMomentum?.current || 1;
+    const isAttacked = view.map?.globalAttack != null;
+
+    // -- 3) DRAW WALLS AND FURNITURE --
+    for (const [name, r] of Object.entries(geo.rooms)) {
+      const here = name === myRoom;
+      const texKey = name.startsWith("Turret") ? "Turret" : (name.startsWith("Corridor") || name.includes("Junction") ? "Corridor" : name);
+      const img = IMG_CACHE[texKey] || IMG_CACHE["Storage"];
+      const hasImg = img && img.complete && img.naturalWidth;
+      
+      const pTop = { x: r.x, y: r.y };
+      const pRight = { x: r.x + r.w, y: r.y };
+      const pLeft = { x: r.x, y: r.y + r.h };
+      
+      const sTop = toScreen(pTop.x, pTop.y);
+      const sRight = toScreen(pRight.x, pRight.y);
+      const sLeft = toScreen(pLeft.x, pLeft.y);
+      
+      const WALL_H = 300;
+      const sTopH = toScreen(pTop.x, pTop.y); sTopH.sy -= WALL_H * ISO.scale;
+      const sRightH = toScreen(pRight.x, pRight.y); sRightH.sy -= WALL_H * ISO.scale;
+      const sLeftH = toScreen(pLeft.x, pLeft.y); sLeftH.sy -= WALL_H * ISO.scale;
+      
+      // -- DRAW ANIMATED STARS (HELM) --
+      if (name === "Helm") {
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(sTop.sx + ox, sTop.sy + oy);
+        ctx.lineTo(sLeft.sx + ox, sLeft.sy + oy);
+        ctx.lineTo(sLeftH.sx + ox, sLeftH.sy + oy);
+        ctx.lineTo(sTopH.sx + ox, sTopH.sy + oy);
+        ctx.clip(); // Clip to left wall area
+        
+        ctx.fillStyle = "#05020a"; 
+        ctx.fillRect(-1000 + ox, -1000 + oy, 4000, 4000);
+        
+        ctx.fillStyle = "#ffffff";
+        const starSpeed = 800 * engineSpeed + 100; 
+        const offset = (t * starSpeed) % 800;
+        for (let i = 0; i < 150; i++) {
+          const sx = ((i * 137) % 800) - offset;
+          const sy = (i * 93) % 400;
+          let finalX = sx;
+          while(finalX < -400) finalX += 800;
+          ctx.globalAlpha = (i % 5) / 5 + 0.2;
+          ctx.beginPath(); ctx.arc(sTop.sx + ox + finalX, sTopH.sy + oy + sy, i%3, 0, 6); ctx.fill();
+        }
+        if (isAttacked && Math.random() > 0.8) {
+           ctx.fillStyle = "rgba(255, 100, 50, 0.8)";
+           ctx.beginPath(); ctx.arc(sTop.sx + ox - 200 + Math.random()*400, sTopH.sy + oy + Math.random()*200, Math.random()*50, 0, 6); ctx.fill();
+        }
+        ctx.restore();
+      }
+
+      // -- DRAW TOP-RIGHT WALL --
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(sTop.sx + ox, sTop.sy + oy); ctx.lineTo(sRight.sx + ox, sRight.sy + oy);
+      ctx.lineTo(sRightH.sx + ox, sRightH.sy + oy); ctx.lineTo(sTopH.sx + ox, sTopH.sy + oy); ctx.closePath();
+      
+      if (hasImg) {
+          ctx.clip();
+          const hClip = r.h * 0.15; // Top 15% of image folds up to the right wall
+          ctx.translate(sTopH.sx + ox, sTopH.sy + oy);
+          ctx.transform(ISO.cos * ISO.scale, ISO.sin * ISO.scale, 0, WALL_H / hClip, 0, 0);
+          ctx.drawImage(img, 0, 0, img.width, img.height * 0.15, 0, 0, r.w, hClip);
+      } else {
+          ctx.fillStyle = "#3c3258"; ctx.fill(); 
+      }
+      // Inner corner crease
+      ctx.strokeStyle = "rgba(0, 0, 0, 0.3)"; ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.moveTo(sTop.sx + ox, sTop.sy + oy); ctx.lineTo(sRight.sx + ox, sRight.sy + oy); ctx.stroke();
+      ctx.restore();
+      
+      // -- DRAW TOP-LEFT WALL --
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(sTop.sx + ox, sTop.sy + oy); ctx.lineTo(sLeft.sx + ox, sLeft.sy + oy);
+      ctx.lineTo(sLeftH.sx + ox, sLeftH.sy + oy); ctx.lineTo(sTopH.sx + ox, sTopH.sy + oy); ctx.closePath();
+      
+      if (name === "Helm" && hasImg) {
+          // Punch a window hole BEFORE drawing the folded wall texture so stars show through!
+          const wTop = { sx: sTopH.sx * 0.85 + sLeftH.sx * 0.15, sy: sTopH.sy * 0.85 + sLeftH.sy * 0.15 };
+          const wBot = { sx: sTop.sx * 0.85 + sLeft.sx * 0.15, sy: sTop.sy * 0.85 + sLeft.sy * 0.15 };
+          const wTop2 = { sx: sTopH.sx * 0.15 + sLeftH.sx * 0.85, sy: sTopH.sy * 0.15 + sLeftH.sy * 0.85 };
+          const wBot2 = { sx: sTop.sx * 0.15 + sLeft.sx * 0.85, sy: sTop.sy * 0.15 + sLeft.sy * 0.85 };
+          
+          ctx.moveTo(wTop2.sx + ox, wTop2.sy + oy + 40);
+          ctx.lineTo(wBot2.sx + ox, wBot2.sy + oy - 40);
+          ctx.lineTo(wBot.sx + ox, wBot.sy + oy - 40);
+          ctx.lineTo(wTop.sx + ox, wTop.sy + oy + 40);
+          ctx.closePath();
+          ctx.clip("evenodd");
+      } else {
+          ctx.clip();
+      }
+      
+      if (hasImg) {
+          const wClip = r.w * 0.15; // Left 15% of image folds up to the left wall
+          ctx.translate(sTopH.sx + ox, sTopH.sy + oy);
+          ctx.transform(0, WALL_H / wClip, -ISO.cos * ISO.scale, ISO.sin * ISO.scale, 0, 0);
+          ctx.drawImage(img, 0, 0, img.width * 0.15, img.height, 0, 0, wClip, r.h);
+      } else {
+          ctx.fillStyle = "#2d2545"; ctx.fill();
+      }
+      ctx.restore();
+      
+      // Inner corner creases
+      ctx.strokeStyle = "rgba(0, 0, 0, 0.3)"; ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.moveTo(sTop.sx + ox, sTop.sy + oy); ctx.lineTo(sLeft.sx + ox, sLeft.sy + oy); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(sTop.sx + ox, sTop.sy + oy); ctx.lineTo(sTopH.sx + ox, sTopH.sy + oy); ctx.stroke();
+
+      // Draw room label at center of the floor
+      const cCenter = toScreen(r.x + r.w / 2, r.y + r.h / 2);
+      ctx.fillStyle = here ? "#ffffff" : "#00f0ff";
+      ctx.font = "800 15px Rajdhani, sans-serif"; ctx.textAlign = "center";
+      ctx.fillText(name, cCenter.sx + ox, cCenter.sy + oy - 4);
+      
       let tag = null, col = null;
       if (refill.has(name)) { tag = "O₂"; col = "#46e6ff"; }
       else if (repair.has(name)) { tag = "⚒"; col = "#ffc83d"; }
       else if (turret.has(name)) { tag = "▣"; col = "#ff2d4d"; }
-      if (tag) { ctx.fillStyle = col; ctx.font = "700 12px Rajdhani"; ctx.fillText(tag, ctr.sx + ox, ctr.sy + oy + 12); }
+      if (tag) { ctx.fillStyle = col; ctx.font = "700 12px Rajdhani"; ctx.fillText(tag, cCenter.sx + ox, cCenter.sy + oy + 12); }
     }
+    
+    // -- DRAW CORRIDORS: wall-edge to wall-edge with yellow doorway markers --
+    // hw must match CORR_HW on the server (250 world units)
+    const CORR_HW = 250;
+    ctx.lineCap = "butt";
 
-    // furniture blockers: draw each collision rect as a filled iso quad so the
-    // obstacles players bump into are visible (matches the server's collision data).
-    const blockers = view.map.blockers || {};
-    for (const rects of Object.values(blockers)) {
-      for (const b of rects) {
-        const q = [
-          toScreen(b.x, b.y), toScreen(b.x + b.w, b.y),
-          toScreen(b.x + b.w, b.y + b.h), toScreen(b.x, b.y + b.h),
-        ].map((p) => ({ x: p.sx + ox, y: p.sy + oy }));
-        ctx.beginPath(); ctx.moveTo(q[0].x, q[0].y);
-        for (let i = 1; i < 4; i++) ctx.lineTo(q[i].x, q[i].y); ctx.closePath();
-        ctx.fillStyle = "rgba(60,54,82,0.85)"; ctx.fill();
-        ctx.strokeStyle = "rgba(120,110,150,0.6)"; ctx.lineWidth = 1; ctx.stroke();
+    // Helper: find point on room's boundary in direction (ux,uy) from center
+    const wallExit = (r, ux, uy) => {
+      const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+      const tx = Math.abs(ux) > 1e-9 ? (r.w / 2) / Math.abs(ux) : Infinity;
+      const ty = Math.abs(uy) > 1e-9 ? (r.h / 2) / Math.abs(uy) : Infinity;
+      const t = Math.min(tx, ty);
+      return { x: cx + ux * t, y: cy + uy * t };
+    };
+
+    for (const [a, b] of geo.corridors) {
+      const ra = geo.rooms[a], rb = geo.rooms[b];
+      if (!ra || !rb) continue;
+
+      const isAirlockSpace = (a === "Airlock" && b === "Space") || (a === "Space" && b === "Airlock");
+      if (isAirlockSpace) continue; // directly touching, no corridor tunnel
+
+      const ax = ra.x + ra.w / 2, ay = ra.y + ra.h / 2;
+      const bx = rb.x + rb.w / 2, by = rb.y + rb.h / 2;
+      const len = Math.hypot(bx - ax, by - ay);
+      if (len === 0) continue;
+      const ux = (bx - ax) / len, uy = (by - ay) / len;
+      const nx = -uy, ny = ux; // perpendicular
+
+      // Wall mouth points
+      const startW = wallExit(ra, ux, uy);   // exit from room A's wall
+      const endW   = wallExit(rb, -ux, -uy); // exit from room B's wall
+
+      // Only draw corridor floor if there's actually a gap between rooms
+      const gapLen = Math.hypot(endW.x - startW.x, endW.y - startW.y);
+
+      if (gapLen > 20) {
+        // 4 corners of the corridor floor polygon
+        const c1w = { x: startW.x + nx * CORR_HW, y: startW.y + ny * CORR_HW };
+        const c2w = { x: endW.x   + nx * CORR_HW, y: endW.y   + ny * CORR_HW };
+        const c3w = { x: endW.x   - nx * CORR_HW, y: endW.y   - ny * CORR_HW };
+        const c4w = { x: startW.x - nx * CORR_HW, y: startW.y - ny * CORR_HW };
+
+        const sc1 = toScreen(c1w.x, c1w.y);
+        const sc2 = toScreen(c2w.x, c2w.y);
+        const sc3 = toScreen(c3w.x, c3w.y);
+        const sc4 = toScreen(c4w.x, c4w.y);
+
+        // Dark corridor floor
+        ctx.fillStyle = "#12101e";
+        ctx.beginPath();
+        ctx.moveTo(sc1.sx + ox, sc1.sy + oy);
+        ctx.lineTo(sc2.sx + ox, sc2.sy + oy);
+        ctx.lineTo(sc3.sx + ox, sc3.sy + oy);
+        ctx.lineTo(sc4.sx + ox, sc4.sy + oy);
+        ctx.closePath();
+        ctx.fill();
+
+        // 3D walls along corridor sides (only the top/back wall to avoid hiding players)
+        const WALL_H = 280;
+        if (sc1.sy < sc4.sy) {
+          const sc1H = { sx: sc1.sx, sy: sc1.sy - WALL_H * ISO.scale };
+          const sc2H = { sx: sc2.sx, sy: sc2.sy - WALL_H * ISO.scale };
+          ctx.fillStyle = "#2a2040";
+          ctx.beginPath(); ctx.moveTo(sc1.sx+ox,sc1.sy+oy); ctx.lineTo(sc2.sx+ox,sc2.sy+oy);
+          ctx.lineTo(sc2H.sx+ox,sc2H.sy+oy); ctx.lineTo(sc1H.sx+ox,sc1H.sy+oy); ctx.closePath(); ctx.fill();
+        } else {
+          const sc3H = { sx: sc3.sx, sy: sc3.sy - WALL_H * ISO.scale };
+          const sc4H = { sx: sc4.sx, sy: sc4.sy - WALL_H * ISO.scale };
+          ctx.fillStyle = "#382d58";
+          ctx.beginPath(); ctx.moveTo(sc3.sx+ox,sc3.sy+oy); ctx.lineTo(sc4.sx+ox,sc4.sy+oy);
+          ctx.lineTo(sc4H.sx+ox,sc4H.sy+oy); ctx.lineTo(sc3H.sx+ox,sc3H.sy+oy); ctx.closePath(); ctx.fill();
+        }
       }
     }
+
+    // === DRAW GLOWING YELLOW BOUNDARIES (where you can't walk past) ===
+    ctx.save();
+    ctx.strokeStyle = "#ffe020";
+    ctx.lineWidth = 3;
+    ctx.shadowColor = "#ffe020";
+    ctx.shadowBlur = 8;
+
+    // 1) Room walls (leaving gaps at doorways)
+    for (const [name, r] of Object.entries(geo.rooms)) {
+      if (name === "Space") continue;
+
+      const cx = r.x + r.w / 2;
+      const cy = r.y + r.h / 2;
+      const roomCorrs = geo.corridors.filter(([a, b]) => a === name || b === name);
+
+      const walls = [
+        { p1: { x: r.x, y: r.y }, p2: { x: r.x + r.w, y: r.y }, idx: 0 }, // Top-Right
+        { p1: { x: r.x + r.w, y: r.y }, p2: { x: r.x + r.w, y: r.y + r.h }, idx: 1 }, // Bottom-Right
+        { p1: { x: r.x + r.w, y: r.y + r.h }, p2: { x: r.x, y: r.y + r.h }, idx: 2 }, // Bottom-Left
+        { p1: { x: r.x, y: r.y + r.h }, p2: { x: r.x, y: r.y }, idx: 3 } // Top-Left
+      ];
+
+      walls.forEach((wall) => {
+        let doorMid = null;
+        let doorDir = null;
+
+        for (const [a, b] of roomCorrs) {
+          const neighbor = a === name ? b : a;
+          const rn = geo.rooms[neighbor];
+          if (!rn) continue;
+
+          const ncx = rn.x + rn.w / 2;
+          const ncy = rn.y + rn.h / 2;
+          const dx = ncx - cx;
+          const dy = ncy - cy;
+
+          let wallIdx = -1;
+          if (Math.abs(dx) > Math.abs(dy)) {
+            wallIdx = dx > 0 ? 1 : 3;
+          } else {
+            wallIdx = dy > 0 ? 2 : 0;
+          }
+
+          if (wall.idx === wallIdx) {
+            const len = Math.hypot(dx, dy);
+            doorMid = wallExit(r, dx / len, dy / len);
+            doorDir = { x: -dy / len, y: dx / len };
+            break;
+          }
+        }
+
+        if (doorMid && doorDir) {
+          const doorEdge1 = { x: doorMid.x + doorDir.x * CORR_HW, y: doorMid.y + doorDir.y * CORR_HW };
+          const doorEdge2 = { x: doorMid.x - doorDir.x * CORR_HW, y: doorMid.y - doorDir.y * CORR_HW };
+
+          const s1 = toScreen(wall.p1.x, wall.p1.y);
+          const s2 = toScreen(wall.p2.x, wall.p2.y);
+          const sd1 = toScreen(doorEdge1.x, doorEdge1.y);
+          const sd2 = toScreen(doorEdge2.x, doorEdge2.y);
+
+          const d1_to_sd1 = Math.hypot(wall.p1.x - doorEdge1.x, wall.p1.y - doorEdge1.y);
+          const d1_to_sd2 = Math.hypot(wall.p1.x - doorEdge2.x, wall.p1.y - doorEdge2.y);
+          const closeEdge = d1_to_sd1 < d1_to_sd2 ? sd1 : sd2;
+          const farEdge = d1_to_sd1 < d1_to_sd2 ? sd2 : sd1;
+
+          ctx.beginPath(); ctx.moveTo(s1.sx + ox, s1.sy + oy); ctx.lineTo(closeEdge.sx + ox, closeEdge.sy + oy); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(farEdge.sx + ox, farEdge.sy + oy); ctx.lineTo(s2.sx + ox, s2.sy + oy); ctx.stroke();
+        } else {
+          const s1 = toScreen(wall.p1.x, wall.p1.y);
+          const s2 = toScreen(wall.p2.x, wall.p2.y);
+          ctx.beginPath(); ctx.moveTo(s1.sx + ox, s1.sy + oy); ctx.lineTo(s2.sx + ox, s2.sy + oy); ctx.stroke();
+        }
+      });
+    }
+
+    // 2) Corridor side walls (yellow border outlines)
+    for (const [a, b] of geo.corridors) {
+      const ra = geo.rooms[a], rb = geo.rooms[b];
+      if (!ra || !rb) continue;
+      if ((a === "Airlock" && b === "Space") || (a === "Space" && b === "Airlock")) continue;
+
+      const ax = ra.x + ra.w / 2, ay = ra.y + ra.h / 2;
+      const bx = rb.x + rb.w / 2, by = rb.y + rb.h / 2;
+      const len = Math.hypot(bx - ax, by - ay);
+      if (len === 0) continue;
+      const ux = (bx - ax) / len, uy = (by - ay) / len;
+      const nx = -uy, ny = ux;
+
+      const startW = wallExit(ra, ux, uy);
+      const endW = wallExit(rb, -ux, -uy);
+      const gapLen = Math.hypot(endW.x - startW.x, endW.y - startW.y);
+
+      if (gapLen > 20) {
+        const c1w = { x: startW.x + nx * CORR_HW, y: startW.y + ny * CORR_HW };
+        const c2w = { x: endW.x   + nx * CORR_HW, y: endW.y   + ny * CORR_HW };
+        const c4w = { x: startW.x - nx * CORR_HW, y: startW.y - ny * CORR_HW };
+        const c3w = { x: endW.x   - nx * CORR_HW, y: endW.y   - ny * CORR_HW };
+
+        const sc1 = toScreen(c1w.x, c1w.y);
+        const sc2 = toScreen(c2w.x, c2w.y);
+        const sc3 = toScreen(c3w.x, c3w.y);
+        const sc4 = toScreen(c4w.x, c4w.y);
+
+        ctx.beginPath(); ctx.moveTo(sc1.sx + ox, sc1.sy + oy); ctx.lineTo(sc2.sx + ox, sc2.sy + oy); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(sc4.sx + ox, sc4.sy + oy); ctx.lineTo(sc3.sx + ox, sc3.sy + oy); ctx.stroke();
+      }
+    }
+    ctx.restore();
   }
+
 
   if (!geo) return <div style={{ display: "grid", placeItems: "center", height: "100%", color: "var(--faint)" }} className="impactf">NO SPATIAL MAP</div>;
 
   const { ox, oy } = camera();
   const players = view.players || [];
 
+  const getTaskWorldPos = (roomName, taskName) => {
+    const r = geo?.rooms?.[roomName];
+    if (!r) return null;
+    const cx = r.x + r.w / 2;
+    const cy = r.y + r.h / 2;
+
+    let hash = 0;
+    const str = taskName || "";
+    for (let i = 0; i < str.length; i++) {
+      hash = str.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    const idx = Math.abs(hash);
+
+    const offsets = [
+      { dx: -r.w / 4, dy: -r.h / 4 },
+      { dx: r.w / 4, dy: r.h / 4 },
+      { dx: -r.w / 4, dy: r.h / 4 },
+      { dx: r.w / 4, dy: -r.h / 4 },
+      { dx: 0, dy: -r.h / 3 },
+      { dx: 0, dy: r.h / 3 },
+    ];
+    const offset = offsets[idx % offsets.length];
+    return { x: cx + offset.dx, y: cy + offset.dy };
+  };
+
   return (
-    <div ref={wrapRef} style={{ position: "relative", width: "100%", height: "100%", overflow: "hidden", cursor: "default", background: "radial-gradient(120% 100% at 50% 30%, #15111f 0%, #0b0911 70%)" }}>
+    <div ref={wrapRef} style={{ position: "relative", width: "100%", height: "100%", overflow: "hidden", cursor: "crosshair", background: "radial-gradient(120% 100% at 50% 30%, #1a1030 0%, #0d0820 70%)" }}>
       <canvas ref={canvasRef} style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }} />
-      {/* corpses: a body left on the floor where a player died. Living players see
-          these (the ghost itself is hidden); a discovery is a big deal. */}
-      {(view.corpses || []).filter((c) => c.x != null).map((c) => {
-        const s = toScreen(c.x, c.y);
-        return (
-          <div key={c.id} style={{ position: "absolute", left: s.sx + ox, top: s.sy + oy, transform: "translate(-50%,-60%)", pointerEvents: "none", textAlign: "center" }}>
-            <svg width="60" height="40" viewBox="0 0 60 40" style={{ filter: "drop-shadow(0 3px 4px rgba(0,0,0,0.6))" }}>
-              {/* blood pool */}
-              <ellipse cx="30" cy="30" rx="26" ry="9" fill="rgba(180,20,40,0.5)" />
-              {/* slumped body (lying down), tinted with the victim's id color */}
-              <ellipse cx="22" cy="22" rx="13" ry="9" fill={c.idColor?.hex || "#888"} stroke="#0d0b14" strokeWidth="2" />
-              <circle cx="40" cy="20" r="9" fill="#f3d9c6" stroke="#0d0b14" strokeWidth="2" />
-              {/* x_x eyes */}
-              <path d="M36 18 l3 3 M39 18 l-3 3" stroke="#0d0b14" strokeWidth="1.5" />
-              <path d="M43 18 l3 3 M46 18 l-3 3" stroke="#0d0b14" strokeWidth="1.5" />
-            </svg>
-            <div style={{ fontFamily: "var(--impact)", fontSize: 9, color: "#ff6b81", background: "rgba(13,11,20,0.85)", padding: "0 5px", whiteSpace: "nowrap", marginTop: -4 }}>☠ BODY</div>
-          </div>
-        );
-      })}
-      {/* in-world TASK markers: a yellow "!" you walk up to and press E. Only your
-          own uncompleted tasks show, in the room you're in. Glows brighter when
-          you're close enough to interact. */}
-      {(view.you?.tasks || []).filter((t) => !t.done && t.x != null && t.room === view.you?.room).map((t) => {
-        const s = toScreen(t.x, t.y);
-        const near = view.you?.x != null && Math.hypot(t.x - view.you.x, t.y - view.you.y) <= 150;
-        return (
-          <div key={t.id} style={{ position: "absolute", left: s.sx + ox, top: s.sy + oy, transform: "translate(-50%,-100%)", pointerEvents: "none", textAlign: "center" }}>
-            <div style={{ fontSize: near ? 30 : 24, lineHeight: 1, color: "#ffd24d", fontWeight: 900,
-              textShadow: near ? "0 0 12px #ffd24d, 0 2px 3px #000" : "0 2px 3px #000", animation: "taskbob 1.2s ease-in-out infinite" }}>❗</div>
-            {near && <div style={{ fontFamily: "var(--impact)", fontSize: 10, color: "#ffd24d", background: "rgba(13,11,20,0.85)", padding: "1px 6px", marginTop: 2, whiteSpace: "nowrap" }}>E · {t.name}</div>}
-          </div>
-        );
-      })}
+      {/* destination marker */}
+      {view.you?.tx != null && (() => {
+        const s = toScreen(view.you.tx, view.you.ty);
+        return <div style={{ position: "absolute", left: s.sx + ox, top: s.sy + oy, width: 14, height: 14, transform: "translate(-50%,-50%)", border: "2px solid var(--hot)", borderRadius: "50%", pointerEvents: "none", opacity: 0.7 }} />;
+      })()}
+      
+      {/* active task exclamation marks */}
+      {view.you?.tasks && (() => {
+        return view.you.tasks
+          .filter(t => !t.done)
+          .map((t) => {
+            const pos = getTaskWorldPos(t.room, t.name);
+            if (!pos) return null;
+            const s = toScreen(pos.x, pos.y);
+            return (
+              <div 
+                key={t.id} 
+                style={{ 
+                  position: "absolute", 
+                  left: s.sx + ox, 
+                  top: s.sy + oy - 15,
+                  transform: "translate(-50%,-100%)", 
+                  pointerEvents: "none",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  zIndex: 20
+                }}
+              >
+                <div style={{
+                  color: "#ffc83d",
+                  fontSize: 32,
+                  fontWeight: 900,
+                  textShadow: "0 0 12px rgba(255,200,61,0.9)",
+                  animation: "taskbob 1.4s ease-in-out infinite",
+                  lineHeight: 1
+                }}>
+                  !
+                </div>
+                <div style={{
+                  background: "rgba(13,11,20,0.85)",
+                  border: "1px solid #ffc83d",
+                  color: "#ffc83d",
+                  fontSize: 9,
+                  fontWeight: 700,
+                  padding: "2px 6px",
+                  borderRadius: 2,
+                  marginTop: 2,
+                  whiteSpace: "nowrap",
+                  letterSpacing: "0.05em",
+                  boxShadow: "0 2px 10px rgba(0,0,0,0.5)"
+                }}>
+                  {t.name}
+                </div>
+              </div>
+            );
+          });
+      })()}
+
       {/* characters, depth-sorted by world y+x so nearer ones overlap farther */}
       {[...players]
         .filter((p) => p.x != null && p.y != null)
@@ -315,16 +573,7 @@ export default function IsoStage({ view, emoteBubbles = {} }) {
           const isYou = p.id === view.you?.id;
           return (
             <div key={p.id} style={{ position: "absolute", left: s.sx + ox, top: s.sy + oy }}>
-              <IsoPilot player={p} facing={r.facing || "SE"} moving={r.moving} isYou={isYou} scale={1.0}
-                showSymbol={a11y.colorblindShapes} showLabel={a11y.colorblindLabels} />
-              {emoteBubbles[p.id] && <EmoteBubble emoji={emoteBubbles[p.id].emoji} />}
-              {a11y.ghostReadability && (p.plane === "energy" || p.plane === "eliminated") && (
-                <div style={{ position: "absolute", left: "50%", top: -20, transform: "translate(-50%,-100%)",
-                  fontFamily: "var(--impact)", fontSize: 9, padding: "0 5px", background: "rgba(70,230,255,0.18)",
-                  color: "#7fe8ff", border: "1px dashed #46e6ff", whiteSpace: "nowrap" }}>
-                  {p.plane === "eliminated" ? "FROZEN" : "GHOST"}
-                </div>
-              )}
+              <IsoPilot player={p} facing={r.facing || "SE"} moving={r.moving} isYou={isYou} scale={1.2} showColorblind={showColorblind} />
               <div style={{ position: "absolute", left: "50%", top: -2, transform: "translate(-50%,-100%)", whiteSpace: "nowrap",
                 fontFamily: "var(--impact)", fontSize: 10, padding: "1px 6px", background: "rgba(13,11,20,0.8)",
                 color: isYou ? "var(--hot)" : "var(--paper)", border: `1px solid ${p.idColor?.hex || "var(--line)"}` }}>
@@ -333,7 +582,19 @@ export default function IsoStage({ view, emoteBubbles = {} }) {
             </div>
           );
         })}
-      <style>{`@keyframes pilotbob{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}} @keyframes emotePop{0%{transform:translateX(-50%) scale(0.3);opacity:0}60%{transform:translateX(-50%) scale(1.15)}100%{transform:translateX(-50%) scale(1);opacity:1}} @keyframes taskbob{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}`}</style>
+      {view?.lightsOut && view?.you?.role !== "impostor" && view?.you?.plane !== "energy" && view?.phase !== "ended" && (
+        <div style={{
+          position: "absolute",
+          inset: -2000,
+          pointerEvents: "none",
+          background: "radial-gradient(circle 160px at 50% 50%, transparent 20%, rgba(3, 2, 8, 0.98) 70%, rgba(0, 0, 0, 0.995) 100%)",
+          zIndex: 140
+        }} />
+      )}
+      <style>{`
+        @keyframes pilotbob{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}}
+        @keyframes taskbob{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
+      `}</style>
     </div>
   );
 }

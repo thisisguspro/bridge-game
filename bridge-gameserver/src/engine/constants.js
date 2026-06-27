@@ -43,11 +43,11 @@ export const REACTOR_CAPACITY = 250;
 // sustained — oxygen refills go offline and the engines stop advancing.
 export const POWER = {
   MAX: 1000,
-  START: 200,
-  PER_TASK: 60,            // each completed task adds this to the pool
-  OXYGEN_DRAW_PER_SEC: 3,  // cost to keep the oxygen machine (refills) online
-  ENGINE_DRAW_PER_SEC: 6,  // cost to run engines (advances the journey)
-  SHIELD_DRAW_PER_SEC: 4,  // cost to hold shields up
+  START: 500,              // increased from 200
+  PER_TASK: 250,           // raised to 250 from 30 to match slower task completion times
+  OXYGEN_DRAW_PER_SEC: 5,  // increased from 3
+  ENGINE_DRAW_PER_SEC: 7,  // reduced by 1/3 (from 10 to 7)
+  SHIELD_DRAW_PER_SEC: 6,  // increased from 4
 };
 
 // ---- Journey: reaching the next landing location is the crew win ----
@@ -56,77 +56,7 @@ export const POWER = {
 // by design — engines-on forces shields-off). See TUNING.md for the full model.
 export const JOURNEY = {
   DISTANCE: 1350,                // sweep-tuned: ~11min median matches at 8 players
-  ENGINE_SPEED_PER_SEC: 5,
-};
-
-// ---- Helm: engines<->shields power allocation ----
-// One slider, set at the Helm by anyone standing there. allocation 0..1:
-//   0 = ALL power to SHIELDS  -> ship slow (no journey), strong shields (low dmg)
-//   1 = ALL power to ENGINES  -> ship fast (full journey speed), shields off (high dmg)
-// The actual allocation RAMPS toward the target, not instantly: slowing down
-// (toward shields) is quick, speeding up (toward engines) is slow. Perks can
-// scale these ramp rates.
-export const HELM = {
-  START_ALLOCATION: 0.5,          // balanced at match start
-  SLOWDOWN_SECONDS: 5,            // time to ramp fully toward shields (0)
-  SPEEDUP_SECONDS: 15,            // time to ramp fully toward engines (1)
-  // journey speed is ENGINE_SPEED_PER_SEC * allocation
-  // shield strength (damage reduction) scales with (1 - allocation)
-};
-
-// Attacks are announced this many seconds before they hit, so crew can rush to
-// the Helm (dump power to shields / slow down) and man the turrets.
-export const ATTACK_WARNING_SECONDS = 10;
-
-// ---- Emotes ----
-// In-match expressive emotes (separate from voice commands). Each broadcasts a
-// bubble to same-room players + an optional sound cue. `anime` ones lean into the
-// chibi/anime feel. Cosmetic emotes the player owns can extend this at runtime;
-// these are the always-available base set.
-export const EMOTES = {
-  WAVE:      { key: "WAVE",      emoji: "👋", label: "Wave",        kanji: "やあ",   sound: "emote_pop" },
-  LAUGH:     { key: "LAUGH",     emoji: "😂", label: "Laugh",       kanji: "笑",     sound: "emote_laugh" },
-  CRY:       { key: "CRY",       emoji: "😭", label: "Cry",         kanji: "泣",     sound: "emote_cry" },
-  ANGRY:     { key: "ANGRY",     emoji: "😡", label: "Angry",       kanji: "怒",     sound: "emote_angry" },
-  SHOCK:     { key: "SHOCK",     emoji: "😱", label: "Shocked",     kanji: "驚",     sound: "emote_gasp" },
-  SMUG:      { key: "SMUG",      emoji: "😏", label: "Smug",        kanji: "ふっ",   sound: "emote_pop" },
-  HEART:     { key: "HEART",     emoji: "💖", label: "Heart",       kanji: "好き",   sound: "emote_sparkle" },
-  SWEAT:     { key: "SWEAT",     emoji: "😅", label: "Nervous",     kanji: "汗",     sound: "emote_pop" },
-  THINK:     { key: "THINK",     emoji: "🤔", label: "Thinking",    kanji: "考",     sound: "emote_pop" },
-  SLEEP:     { key: "SLEEP",     emoji: "😴", label: "Bored",       kanji: "眠",     sound: "emote_pop" },
-  SALUTE:    { key: "SALUTE",    emoji: "🫡", label: "Salute",      kanji: "敬礼",   sound: "emote_pop" },
-  SPARKLE:   { key: "SPARKLE",   emoji: "✨", label: "Sparkle",     kanji: "キラ",   sound: "emote_sparkle" },
-  SKULL:     { key: "SKULL",     emoji: "💀", label: "Dead",        kanji: "死",     sound: "emote_pop" },
-  POINT:     { key: "POINT",     emoji: "👉", label: "Point (You!)", kanji: "お前",  sound: "emote_alert" },
-  SUS:       { key: "SUS",       emoji: "🤨", label: "Sus",         kanji: "怪",     sound: "emote_alert" },
-  GG:        { key: "GG",        emoji: "🎉", label: "GG",          kanji: "勝利",   sound: "emote_sparkle" },
-};
-
-// Sound cues: logical names the client maps to audio files (with silent fallback
-// when a file isn't present). Gameplay events also trigger cues via SOUND_EVENTS.
-export const SOUND_CUES = [
-  "emote_pop", "emote_laugh", "emote_cry", "emote_angry", "emote_gasp",
-  "emote_sparkle", "emote_alert",
-  "ui_click", "ui_back",
-  "task_start", "task_done", "refill", "repair",
-  "vote_cast", "ejected", "downed",
-  "attack_warning", "attack_hit", "plane_down", "attack_repelled",
-  "sabotage", "airlock_distress", "freeze", "victory", "defeat",
-];
-
-// Map server event types -> a sound cue the client should play when it sees one.
-export const SOUND_EVENTS = {
-  attack_warning: "attack_warning",
-  attack_incoming: "attack_hit",
-  attack_damage: "attack_hit",
-  plane_downed: "plane_down",
-  attack_ended: "attack_repelled",
-  sabotage_started: "sabotage",
-  airlock_distress: "airlock_distress",
-  frozen_in_void: "freeze",
-  eliminated_for_good: "ejected",
-  player_downed: "downed",
-  task_done: "task_done",
+  ENGINE_SPEED_PER_SEC: 1.2,
 };
 
 // ---- Continuous movement (real-time top-down) ----
@@ -134,10 +64,8 @@ export const SOUND_EVENTS = {
 // World units are the same as the map geometry (a room is 120 units). At 180
 // units/sec a player crosses a room in well under a second and a corridor in ~1s.
 export const MOVE = {
-  SPEED_PER_SEC: 1250,           // tuned for the 1030 room
-  ARRIVE_EPS: 8,                 // within this many units = arrived
-  BOT_SPEED_MULT: 0.45,          // bots clearly slower than the player
-  CORRIDOR_WIDTH: 560,           // wide forgiving band
+  SPEED_PER_SEC: 300,            // base glide speed in world units/sec
+  ARRIVE_EPS: 4,                 // within this many units = arrived
 };
 
 // ---- Hull & combat ----
@@ -159,7 +87,7 @@ export const HULL = {
 // ---- Oxygen model ----
 export const OXYGEN = {
   MAX: 100,
-  DRAIN_PER_SEC: 0.5,        // ~200s from full to empty if never refilled
+  DRAIN_PER_SEC: 0.16,        // reduced to 0.16 (1/3 slower than 0.25, was ~400s, now ~625s)
   REFILL_PER_SEC: 25,        // a few seconds at a station to top up
   PANIC_THRESHOLD: 20,       // below this the client shows panic UI
 };
@@ -185,7 +113,7 @@ export const SABOTAGE = {
     fuseSeconds: null, disablesRefill: true,
     resolveRooms: ["Medbay", "Reactor"], resolversNeeded: 2 },
   REACTOR_MELTDOWN: { key: "REACTOR_MELTDOWN", label: "Reactor Meltdown",
-    fuseSeconds: 45, disablesRefill: false, losesIfExpires: true,
+    fuseSeconds: 90, disablesRefill: false, losesIfExpires: true,
     resolveRooms: ["Reactor", "Engineering"], resolversNeeded: 2 },
   COMMS_BLACKOUT: { key: "COMMS_BLACKOUT", label: "Comms Blackout",
     fuseSeconds: null, disablesRefill: false,
@@ -193,57 +121,23 @@ export const SABOTAGE = {
   // NEW: leak the ship's position — attacks come faster & hit harder.
   ATTRACT_ATTACKERS: { key: "ATTRACT_ATTACKERS", label: "Position Leaked",
     fuseSeconds: 35, disablesRefill: false, attractsAttackers: true,
-    resolveRooms: ["Comms Array", "Sensors", "Bridge"], resolversNeeded: 1 },
+    resolveRooms: ["Comms Array", "Sensors", "Helm"], resolversNeeded: 1 },
   // NEW: lights out — crew get a dimmed, low-info view; impostors see normally.
   LIGHTS_OUT: { key: "LIGHTS_OUT", label: "Lights Out",
     fuseSeconds: 30, disablesRefill: false, lightsOut: true,
-    resolveRooms: ["Engineering", "Bridge"], resolversNeeded: 1 },
+    resolveRooms: ["Engineering", "Helm"], resolversNeeded: 1 },
   // NEW: EMP — freezes task completion on BOTH planes. No fuse; multi-point fix.
   EMP_OUTAGE: { key: "EMP_OUTAGE", label: "EMP Power Outage",
     fuseSeconds: null, disablesRefill: false, freezesTasks: true,
     resolveRooms: ["Reactor", "Engineering", "Sensors"], resolversNeeded: 3 },
-  // NEW: call in an enemy attack wave. Unlike other sabotages this isn't a
-  // persistent debuff — it summons the turret-defense swarm and runs on its OWN
-  // cooldown (ATTACK.CALL_COOLDOWN_SEC), separate from the normal sabotage gate.
-  CALL_ATTACK: { key: "CALL_ATTACK", label: "Enemy Wave Inbound",
-    fuseSeconds: null, disablesRefill: false, callsAttack: true,
-    ownCooldown: true, resolveRooms: [], resolversNeeded: 0 },
-};
-
-// ---- Turret-defense attack waves ----
-// An attack is a discrete event: a swarm of enemy planes the crew must shoot down
-// from turrets. The attack ends when the whole swarm is destroyed. While it's
-// active, any plane still flying damages the hull on a cadence (shields soak some).
-// Attacks trigger on a random timer OR are CALLED IN by a dedicated sabotage that
-// runs on its own cooldown, separate from the normal sabotage cooldown.
-export const ATTACK = {
-  SWARM_SIZE: 20,            // total planes to shoot down to end an attack
-  DAMAGE_INTERVAL_SEC: 6,    // how often surviving planes hit the hull
-  DMG_PER_TICK_SHIELDED: 2,  // hull damage per cadence tick with shields up
-  DMG_PER_TICK_UNSHIELDED: 5,
-  SHOT_COOLDOWN_SEC: 0.8,    // min time between a turret's shots (server-enforced)
-  PLANES_PER_SHOT: 1,        // planes downed per shot
-  RANDOM_MIN_SEC: 70,        // earliest a random attack can start after the last
-  RANDOM_MAX_SEC: 140,       // latest
-  CALL_COOLDOWN_SEC: 90,     // dedicated cooldown for the CALL_ATTACK sabotage
-  MAX_DURATION_SEC: 75,      // if crew never clear it, it auto-ends (planes leave)
+  // NEW: airlock lockdown — prevents airlock use until resolved.
+  AIRLOCK_LOCKDOWN: { key: "AIRLOCK_LOCKDOWN", label: "Airlock Lockdown",
+    fuseSeconds: 40, disablesRefill: false, locksAirlock: true,
+    resolveRooms: ["Airlock"], resolversNeeded: 1 },
 };
 
 // While position is leaked, attacks come this much faster and this much harder.
 export const ATTRACT = { intervalFactor: 0.5, dmgFactor: 2 };
-
-// ---- Airlock / going outside ----
-// You exit the ship through the Airlock on a tether (limited to the airlock zone).
-// Outside, oxygen drains fast (it's also your propulsion) and a soldering task out
-// there burns it too. An impostor can lock the door from inside, trapping you; you
-// bang on the door to call for help (all living crew see it), and any crew member
-// can come unlock it. If your oxygen runs out while outside you FREEZE — permanent
-// elimination, no energy plane.
-export const AIRLOCK = {
-  OUTSIDE_OXYGEN_MULT: 3.0,    // oxygen drains this much faster outside
-  SOLDER_OXYGEN_COST: 12,      // extra oxygen the soldering task burns
-  SOLDER_MIN_SECONDS: 8,       // server-timed like other mini-games
-};
 
 // Global sabotage cooldown (shared across all sabotage types), per map override.
 export const GLOBAL_SABOTAGE_COOLDOWN_SEC = 30;
@@ -252,11 +146,22 @@ export const MAPS = {
   nebula_drift: {
     id: "nebula_drift", name: "Nebula Drift", tier: "small",
     minPlayers: 5, maxPlayers: 10, impostors: 1,
-    rooms: ["Bridge", "Engineering", "Sensors", "Reactor", "Medbay", "Turret Alpha", "Turret Beta"],
+    rooms: ["Helm", "Reactor", "Engineering", "Sensors", "Medbay", "Airlock", "Space", "Turret Alpha", "Turret Beta"],
+    adjacency: {
+      "Reactor": ["Engineering", "Sensors"],
+      "Engineering": ["Reactor", "Turret Alpha"],
+      "Turret Alpha": ["Engineering", "Helm"],
+      "Sensors": ["Reactor", "Medbay"],
+      "Medbay": ["Sensors", "Airlock"],
+      "Airlock": ["Medbay", "Turret Beta", "Space"],
+      "Space": ["Airlock"],
+      "Turret Beta": ["Airlock", "Helm"],
+      "Helm": ["Turret Alpha", "Turret Beta"]
+    },
     refillRooms: ["Medbay", "Engineering"], // where you top up O2
     turretRooms: ["Turret Alpha", "Turret Beta"], // >=2 and >=2x impostors (1) => 2
     repairRooms: ["Engineering", "Reactor"],      // divert shields into hull here
-    spawnRoom: "Bridge",
+    spawnRoom: "Helm",
     tasksPerRoom: 2,
     sabotageCooldownSeconds: 25,
     cablePullCooldownSeconds: 45, // longer: pulls are deliberate (sim-tuned starting point)
@@ -264,12 +169,27 @@ export const MAPS = {
   ironhold_station: {
     id: "ironhold_station", name: "Ironhold Station", tier: "large",
     minPlayers: 10, maxPlayers: 20, impostors: 2,
-    rooms: ["Bridge", "Engineering", "Sensors", "Reactor", "Medbay", "Cargo", "Hangar", "Comms Array",
-            "Turret Alpha", "Turret Beta", "Turret Gamma", "Turret Delta"],
+    rooms: ["Helm", "Reactor", "Engineering", "Sensors", "Medbay", "Cargo", "Hangar", "Comms Array", "Airlock", "Space", "Turret Alpha", "Turret Beta", "Turret Gamma", "Turret Delta"],
+    adjacency: {
+      "Reactor": ["Engineering", "Sensors"],
+      "Engineering": ["Reactor", "Turret Alpha"],
+      "Turret Alpha": ["Engineering", "Cargo"],
+      "Cargo": ["Turret Alpha", "Turret Beta"],
+      "Turret Beta": ["Cargo", "Helm"],
+      "Sensors": ["Reactor", "Medbay"],
+      "Medbay": ["Sensors", "Hangar"],
+      "Hangar": ["Medbay", "Comms Array"],
+      "Comms Array": ["Hangar", "Airlock"],
+      "Airlock": ["Comms Array", "Turret Gamma", "Space"],
+      "Space": ["Airlock"],
+      "Turret Gamma": ["Airlock", "Turret Delta"],
+      "Turret Delta": ["Turret Gamma", "Helm"],
+      "Helm": ["Turret Beta", "Turret Delta"]
+    },
     refillRooms: ["Medbay", "Engineering", "Hangar"],
     turretRooms: ["Turret Alpha", "Turret Beta", "Turret Gamma", "Turret Delta"], // >=2x impostors (2) => 4
     repairRooms: ["Engineering", "Reactor", "Cargo"],
-    spawnRoom: "Bridge",
+    spawnRoom: "Helm",
     tasksPerRoom: 3,
     sabotageCooldownSeconds: 20,
     cablePullCooldownSeconds: 40,
@@ -287,16 +207,14 @@ export const MAPS = {
 //
 // Each mini-game is tuned to land in the 10–20s band for a normal player.
 export const MINIGAMES = {
-  wire_connect:  { key: "wire_connect",  label: "Connect the wires",     minSeconds: 11, energy: false },
-  code_sequence: { key: "code_sequence", label: "Enter the code",        minSeconds: 10, energy: false },
-  alignment:     { key: "alignment",     label: "Align the dish",        minSeconds: 12, energy: false },
-  hold_timing:   { key: "hold_timing",   label: "Hold to calibrate",     minSeconds: 13, energy: false },
-  water_sort:    { key: "water_sort",    label: "Sort the coolant",      minSeconds: 12, energy: false },
-  pattern_recall:{ key: "pattern_recall",label: "Recall the pattern",     minSeconds: 10, energy: false },
-  // energy-plane variants — same skills, ghostly theme, a touch quicker so being
-  // downed still feels productive rather than punishing.
-  flux_route:    { key: "flux_route",    label: "Route the flux",        minSeconds: 10, energy: true },
-  phase_match:   { key: "phase_match",   label: "Match the phase",       minSeconds: 11, energy: true },
+  // Physical plane
+  wire_connect:  { key: "wire_connect",  label: "Pipe Router",           minSeconds: 6, energy: false },
+  code_sequence: { key: "code_sequence", label: "Reflex Sequence",       minSeconds: 8, energy: false },
+  alignment:     { key: "alignment",     label: "Target Tracking",       minSeconds: 10, energy: false },
+  hold_timing:   { key: "hold_timing",   label: "Flappy Stabilizer",     minSeconds: 12, energy: false },
+  // Energy plane (cyan tinted, for downed ghosts)
+  flux_route:    { key: "flux_route",    label: "Whack-a-Node",          minSeconds: 12, energy: true },
+  phase_match:   { key: "phase_match",   label: "Target Tracking",       minSeconds: 10, energy: true },
 };
 export const TASK = {
   // Anti-cheat grace: allow completion this many seconds before the nominal min
@@ -304,18 +222,15 @@ export const TASK = {
   EARLY_GRACE_SEC: 1.5,
   // A started task auto-expires if abandoned this long (so it can be restarted).
   ABANDON_SEC: 60,
-  // Ghosts (downed/energy plane) generate this fraction of a living crew member's
-  // task power — they still help, but less.
-  GHOST_POWER_MULT: 0.5,
 };
 // Physical and energy mini-game pools to assign from.
-const PHYSICAL_GAMES = ["wire_connect", "code_sequence", "alignment", "water_sort", "pattern_recall", "hold_timing"];
+const PHYSICAL_GAMES = ["wire_connect", "code_sequence", "alignment", "hold_timing"];
 const ENERGY_GAMES = ["flux_route", "phase_match"];
 export { PHYSICAL_GAMES, ENERGY_GAMES };
 
 // Physical-plane task templates per room.
 export const ROOM_TASKS = {
-  "Bridge": ["Recalibrate navigation array", "Sync command console"],
+  "Helm": ["Calibrate the helm console", "Plot a new course", "Adjust heading"],
   "Engineering": ["Reroute power conduit", "Patch coolant line", "Align drive core"],
   "Sensors": ["Clear sensor static", "Realign dish"],
   "Reactor": ["Stabilize reactor output", "Replace fuel cell", "Vent excess heat"],
@@ -333,12 +248,14 @@ export const ROOM_TASKS = {
   "Turret Beta": ["Fight off boarders", "Reload turret cells"],
   "Turret Gamma": ["Fight off boarders", "Reload turret cells"],
   "Turret Delta": ["Fight off boarders", "Reload turret cells"],
+  "Airlock": ["Cycle the airlock pressure", "Check the EVA suits"],
+  "Space": ["Solder the hull breach", "Replace external sensor array"],
 };
 
 // Energy-plane task templates — the "parallel universe" version of each room.
 // Downed players see these; completing them feeds the SAME shared bar.
 export const ENERGY_TASKS = {
-  "Bridge": ["Channel a navigation echo", "Stabilize a command resonance"],
+  "Helm": ["Channel a navigation whisper", "Stabilize the helm's echo"],
   "Engineering": ["Reweave a power filament", "Calm a coolant spirit", "Tune the drive aura"],
   "Sensors": ["Disperse sensor static-fog", "Refocus the dish's glow"],
   "Reactor": ["Soothe the reactor's pulse", "Rekindle a spent cell", "Bleed off heat-light"],
@@ -356,6 +273,8 @@ export const ENERGY_TASKS = {
   "Turret Beta": ["Banish a boarding wraith", "Rekindle a spent turret-cell"],
   "Turret Gamma": ["Banish a boarding wraith", "Rekindle a spent turret-cell"],
   "Turret Delta": ["Banish a boarding wraith", "Rekindle a spent turret-cell"],
+  "Airlock": ["Mend the airlock's spectral seal", "Calm the pressure ghost"],
+  "Space": ["Weave a hull-breach shimmer", "Realign an astral sensor"],
 };
 
 // ---- Perk draft (v0.4) ----
@@ -372,10 +291,6 @@ export const DRAFT = {
 // side: "crew" | "impostor" | "both"  (both = symmetric, affects everyone)
 // effect keys are read by the engine; magnitudes are intentionally small.
 export const PERKS = {
-  AGILE_THRUSTERS:  { key: "AGILE_THRUSTERS",  side: "crew", label: "Agile Thrusters",
-    desc: "Helm speed/slow changes happen 30% faster.", effect: { helmRampMult: 0.7 } },
-  HEAVY_FLYWHEEL:   { key: "HEAVY_FLYWHEEL",   side: "crew", label: "Heavy Flywheel",
-    desc: "Slower to maneuver (+40% ramp time) but the journey runs 10% longer per engine-second.", effect: { helmRampMult: 1.4 } },
   BIGGER_REACTOR:   { key: "BIGGER_REACTOR",   side: "crew", label: "Reinforced Reactor",
     desc: "+15% power pool capacity.", effect: { powerMaxMult: 1.15 } },
   LONGER_OXYGEN:    { key: "LONGER_OXYGEN",    side: "crew", label: "Deep-Cycle Tank",
@@ -423,26 +338,26 @@ export const VOICE_COMMANDS = {
 // oxygen tank, and the shape floats above the player's head — both independent of
 // cosmetics, so players are always distinguishable. Supports up to 20 (large map).
 export const ID_COLORS = [
-  { name: "red",     hex: "#ff4d4d", shape: "triangle" },
-  { name: "blue",    hex: "#4d7dff", shape: "circle" },
-  { name: "green",   hex: "#49f5a0", shape: "square" },
-  { name: "yellow",  hex: "#ffd24d", shape: "star" },
-  { name: "magenta", hex: "#ff43c8", shape: "diamond" },
-  { name: "cyan",    hex: "#34e2ff", shape: "hexagon" },
-  { name: "orange",  hex: "#ff9a3d", shape: "pentagon" },
-  { name: "purple",  hex: "#b46bff", shape: "cross" },
-  { name: "lime",    hex: "#b6ff3d", shape: "heart" },
-  { name: "pink",    hex: "#ff9ec4", shape: "crescent" },
-  { name: "teal",    hex: "#2fd6c4", shape: "arrow" },
-  { name: "brown",   hex: "#b07a4d", shape: "clover" },
-  { name: "white",   hex: "#f0f0f5", shape: "spade" },
-  { name: "black",   hex: "#3a3a4a", shape: "club" },
-  { name: "gold",    hex: "#e8c24d", shape: "sun" },
-  { name: "navy",    hex: "#2a3d7a", shape: "anchor" },
-  { name: "coral",   hex: "#ff7a6b", shape: "shell" },
-  { name: "mint",    hex: "#9ff5d0", shape: "leaf" },
-  { name: "violet",  hex: "#8b5cff", shape: "bolt" },
-  { name: "tan",     hex: "#d6c29f", shape: "moon" },
+  { name: "red",     hex: "#ff4d4d", shape: "triangle", hue: 0 },
+  { name: "blue",    hex: "#4d7dff", shape: "circle", hue: 220 },
+  { name: "green",   hex: "#49f5a0", shape: "square", hue: 150 },
+  { name: "yellow",  hex: "#ffd24d", shape: "star", hue: 45 },
+  { name: "magenta", hex: "#ff43c8", shape: "diamond", hue: 320 },
+  { name: "cyan",    hex: "#34e2ff", shape: "hexagon", hue: 190 },
+  { name: "orange",  hex: "#ff9a3d", shape: "pentagon", hue: 25 },
+  { name: "purple",  hex: "#b46bff", shape: "cross", hue: 270 },
+  { name: "lime",    hex: "#b6ff3d", shape: "heart", hue: 80 },
+  { name: "pink",    hex: "#ff9ec4", shape: "crescent", hue: 340 },
+  { name: "teal",    hex: "#2fd6c4", shape: "arrow", hue: 170 },
+  { name: "brown",   hex: "#b07a4d", shape: "clover", hue: 25, sat: 0.5 },
+  { name: "white",   hex: "#f0f0f5", shape: "spade", hue: 0, sat: 0 },
+  { name: "black",   hex: "#3a3a4a", shape: "club", hue: 0, sat: 0, bright: 0.2 },
+  { name: "gold",    hex: "#e8c24d", shape: "sun", hue: 45 },
+  { name: "navy",    hex: "#2a3d7a", shape: "anchor", hue: 220, sat: 0.6, bright: 0.5 },
+  { name: "coral",   hex: "#ff7a6b", shape: "shell", hue: 10 },
+  { name: "mint",    hex: "#9ff5d0", shape: "leaf", hue: 150, sat: 0.4, bright: 1.2 },
+  { name: "violet",  hex: "#8b5cff", shape: "bolt", hue: 260 },
+  { name: "tan",     hex: "#d6c29f", shape: "moon", hue: 35, sat: 0.4 },
 ];
 
 // ---- Host match config (v0.7) ----
@@ -457,7 +372,7 @@ export const ID_COLORS = [
 // lobbies (see RoomManager) so strangers aren't dropped into extreme configs.
 export const MATCH_CONFIG_DEFAULTS = {
   // --- standard ---
-  mapId: "nebula_drift",
+  mapId: "procedural",
   isPublic: false,            // private (code-only) unless the host opens it
   // --- advanced (gameplay) ---
   moveSpeedMult: 1.0,         // affects everyone; client uses for movement

@@ -17,10 +17,11 @@ const DEFAULT_BINDS = {
   interact: "KeyE", useTool: "KeyF", sabotage: "KeyQ", commsWheel: "KeyC",
 };
 
-export function useControls({ view, roomId, conn, onOpenTask, onOpenSabotage, onOpenThrottle, onOpenTurret, taskOpen }) {
+export function useControls({ view, roomId, conn, onOpenTask, onOpenSabotage, taskOpen }) {
   const [binds, setBinds] = useState(DEFAULT_BINDS);
   const [showHints, setShowHints] = useState(true);
   const [showTips, setShowTips] = useState(true);
+  const [showColorblind, setShowColorblind] = useState(false);
   const held = useRef(new Set());
   const viewRef = useRef(view); viewRef.current = view;
 
@@ -31,6 +32,7 @@ export function useControls({ view, roomId, conn, onOpenTask, onOpenSabotage, on
       if (d.settings?.accessibility) {
         setShowHints(d.settings.accessibility.showControlHints !== false);
         setShowTips(d.settings.accessibility.showTips !== false);
+        setShowColorblind(d.settings.accessibility.colorblindShapes === true);
       }
     }).catch(() => {});
   }, []);
@@ -49,15 +51,18 @@ export function useControls({ view, roomId, conn, onOpenTask, onOpenSabotage, on
       }
       if (taskOpen) return; // the task mini-game has its own controls
       e.preventDefault();
-      if (action === "interact") doInteract(v, roomId, conn, onOpenTask, onOpenThrottle, onOpenTurret);
+      if (action === "interact") doInteract(v, roomId, conn, onOpenTask);
       else if (action === "useTool") doUseTool(v, roomId, conn);
       else if (action === "sabotage" && v.you?.role === "impostor") onOpenSabotage?.();
     };
-    const up = (e) => { const a = code2action[e.code]; if (a) held.current.delete(a); };
+    const up = (e) => { 
+      const a = code2action[e.code]; 
+      if (a) held.current.delete(a); 
+    };
     window.addEventListener("keydown", down);
     window.addEventListener("keyup", up);
     return () => { window.removeEventListener("keydown", down); window.removeEventListener("keyup", up); };
-  }, [binds, roomId, conn, taskOpen, onOpenTask, onOpenSabotage, onOpenThrottle, onOpenTurret]);
+  }, [binds, roomId, conn, taskOpen, onOpenTask, onOpenSabotage]);
 
   // movement loop: while a WASD key is held, push the destination in that dir
   useEffect(() => {
@@ -70,14 +75,11 @@ export function useControls({ view, roomId, conn, onOpenTask, onOpenSabotage, on
         if (held.current.has("moveDown")) dy += 1;
         if (held.current.has("moveLeft")) dx -= 1;
         if (held.current.has("moveRight")) dx += 1;
-        if (dx || dy) {
+        if (dx !== 0 || dy !== 0) {
           // iso world: screen-up is world (-x,-y); map intuitive WASD to world axes
-          // Project the destination well ahead in the held direction so the player
-          // glides at full engine speed (a short lookahead used to throttle them
-          // far below the bots — this is the real "players feel slow" fix).
-          const LOOK = 1250;
-          const wx = v.you.x + (dx + dy) * LOOK;
-          const wy = v.you.y + (dy - dx) * LOOK;
+          // Set destination far enough ahead that the server doesn't arrive before the next packet!
+          const wx = v.you.x + (dx + dy) * 20;
+          const wy = v.you.y + (dy - dx) * 20;
           conn.setDestination(roomId, wx, wy);
         }
       }
@@ -88,39 +90,15 @@ export function useControls({ view, roomId, conn, onOpenTask, onOpenSabotage, on
   }, [roomId, conn, taskOpen]);
 
   const hints = computeHints(view, binds, taskOpen);
-  return { binds, showHints, showTips, hints };
+  return { binds, showHints, showTips, showColorblind, hints };
 }
 
 // --- action resolvers (mirror what the HUD buttons do) ---
-const INTERACT_RANGE = 150; // world units to a marker
-
-function nearestTask(v) {
-  const you = v.you || {};
-  if (you.x == null) return null;
-  let best = null, bestD = INTERACT_RANGE;
-  for (const t of (you.tasks || [])) {
-    if (t.done || t.room !== you.room || t.x == null) continue;
-    const d = Math.hypot(t.x - you.x, t.y - you.y);
-    if (d <= bestD) { best = t; bestD = d; }
-  }
-  return best;
-}
-
-function doInteract(v, roomId, conn, onOpenTask, onOpenThrottle, onOpenTurret) {
+function doInteract(v, roomId, conn, onOpenTask) {
   const you = v.you || {};
   const room = you.room;
-  // 1) a task marker you're standing near
-  const task = nearestTask(v);
+  const task = (you.tasks || []).find((t) => t.room === room && !t.done);
   if (task) { conn.startTask(roomId, task.id); onOpenTask?.(task); return; }
-  // 2) a turret in this room: man it (or open its fire panel if already manned)
-  if ((v.map?.turretRooms || []).includes(room)) {
-    if (v.yourTurret === room) { onOpenTurret?.(); }
-    else { conn.enterTurret(roomId); onOpenTurret?.(); }
-    return;
-  }
-  // 3) the Helm throttle (interactable when you're in the Helm)
-  if (room === (v.helm?.room || v.map?.spawnRoom) && onOpenThrottle) { onOpenThrottle(); return; }
-  // 4) station actions
   if ((v.map?.refillRooms || []).includes(room)) { conn.refill(roomId); return; }
   if ((v.map?.repairRooms || []).includes(room)) { conn.repair(roomId); return; }
 }
@@ -146,14 +124,12 @@ function computeHints(view, binds, taskOpen) {
     return out;
   }
 
-  // movement is always available (WASD only — click-to-move removed)
+  // movement is always available
   out.push({ key: `${key(binds.moveUp)}${key(binds.moveLeft)}${key(binds.moveDown)}${key(binds.moveRight)}`, label: "Move", combo: true });
 
-  // contextual: only when you're standing near the relevant thing
-  const task = nearestTask(view);
+  // contextual: task / refill / repair on E
+  const task = (you.tasks || []).find((t) => t.room === room && !t.done);
   if (task) out.push({ key: key(binds.interact), label: `Do task: ${task.name}`, hot: true });
-  else if ((view.map?.turretRooms || []).includes(room)) out.push({ key: key(binds.interact), label: view.yourTurret === room ? "Fire turret" : "Man turret", hot: true });
-  else if (room === (view.helm?.room || view.map?.spawnRoom)) out.push({ key: key(binds.interact), label: "Throttle / power", hot: true });
   else if ((view.map?.refillRooms || []).includes(room)) out.push({ key: key(binds.interact), label: "Refill O₂", hot: true });
   else if ((view.map?.repairRooms || []).includes(room)) out.push({ key: key(binds.interact), label: "Repair hull", hot: true });
 
@@ -173,7 +149,7 @@ function computeHints(view, binds, taskOpen) {
 export function ControlHints({ hints }) {
   if (!hints || !hints.length) return null;
   return (
-    <div style={{ position: "absolute", left: 16, bottom: 96, display: "flex", flexDirection: "column", gap: 6, pointerEvents: "none", zIndex: 60 }}>
+    <div style={{ position: "absolute", left: 16, bottom: 90, display: "flex", flexDirection: "column", gap: 6, pointerEvents: "none", zIndex: 60 }}>
       <div className="impactf faint" style={{ fontSize: 9, letterSpacing: "0.16em", marginBottom: 2 }}>CONTROLS</div>
       {hints.map((h, i) => (
         <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, opacity: h.disabled ? 0.45 : 1 }}>
@@ -220,12 +196,12 @@ export function TipBubble({ view, enabled }) {
   }, [enabled, tips.length]);
   if (!enabled || dismissed || !view || view.phase !== "active") return null;
   return (
-    <div style={{ position: "absolute", bottom: 100, right: 16, zIndex: 55, maxWidth: 360, width: "min(360px, 50%)",
-      display: "flex", alignItems: "center", gap: 11, padding: "11px 15px",
-      background: "rgba(13,11,20,0.94)", border: "1px solid var(--volt)", backdropFilter: "blur(4px)",
-      boxShadow: "0 4px 16px rgba(0,0,0,0.5)" }}>
-      <span className="kanji" style={{ fontSize: 18, color: "var(--volt)", flexShrink: 0 }}>助</span>
-      <span style={{ fontSize: 14.5, lineHeight: 1.35, flex: 1 }}>{tips[idx]}</span>
+    <div style={{ position: "absolute", top: 90, right: 16, zIndex: 55, maxWidth: 360, width: "44%",
+      display: "flex", alignItems: "center", gap: 14, padding: "12px 16px",
+      background: "rgba(8,5,16,0.95)", border: "1px solid var(--volt)", backdropFilter: "blur(5px)",
+      boxShadow: "0 8px 30px rgba(0,0,0,0.6)" }}>
+      <span className="kanji" style={{ fontSize: 20, color: "var(--volt)" }}>助</span>
+      <span className="display" style={{ fontSize: 16, flex: 1, letterSpacing: "0.03em", lineHeight: 1.2, color: "var(--paper)" }}>{tips[idx]}</span>
       <button onClick={() => setDismissed(true)} style={{ background: "none", border: "none", color: "var(--dim)", cursor: "pointer", fontSize: 16, lineHeight: 1 }}>×</button>
     </div>
   );

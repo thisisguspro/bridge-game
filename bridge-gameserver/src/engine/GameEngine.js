@@ -24,8 +24,8 @@ import {
   PHASE, ROLE, PLANE, WINNER, SYSTEMS, REACTOR_CAPACITY,
   OXYGEN, VOTE, SABOTAGE, MAPS, ROOM_TASKS, ENERGY_TASKS,
   MINIGAMES, TASK, PHYSICAL_GAMES, ENERGY_GAMES,
-  POWER, JOURNEY, MOVE, HULL, HELM, ATTACK_WARNING_SECONDS, ATTRACT, ATTACK, AIRLOCK, GLOBAL_SABOTAGE_COOLDOWN_SEC,
-  DRAFT, PERKS, VOICE_COMMANDS, EMOTES, ID_COLORS, MATCH_CONFIG_DEFAULTS,
+  POWER, JOURNEY, MOVE, HULL, ATTRACT, GLOBAL_SABOTAGE_COOLDOWN_SEC,
+  DRAFT, PERKS, VOICE_COMMANDS, ID_COLORS, MATCH_CONFIG_DEFAULTS,
 } from "./constants.js";
 import { getMode } from "./modes/index.js";
 
@@ -34,11 +34,9 @@ const newId = (p) => `${p}_${seq++}`;
 
 import { makeRng, shuffle } from "./rng.js";
 import { generateMap, buildGeometry } from "./mapgen.js";
-import { generateShip } from "./shipgen.js";
-import { blockersForRoom, resolveMove, nearestFree, PLAYER_RADIUS } from "./collision.js";
 
 export class GameEngine {
-  constructor({ mapId = "nebula_drift", seed = null, config = {}, map = null } = {}) {
+  constructor({ mapId = "procedural", seed = null, config = {}, map = null } = {}) {
     // Resolve host config over defaults. mapId in config wins if provided.
     this.config = { ...MATCH_CONFIG_DEFAULTS, ...config };
     const resolvedMapId = config.mapId || mapId;
@@ -48,33 +46,18 @@ export class GameEngine {
     let resolved = map;
     if (!resolved && typeof resolvedMapId === "string" && resolvedMapId.startsWith("procedural")) {
       const players = Number(resolvedMapId.split(":")[1]) || config.players || 8;
-      resolved = generateShip({ players, seed });
+      resolved = generateMap({ players, seed });
     }
     if (!resolved) resolved = MAPS[resolvedMapId];
     if (!resolved) throw new Error(`Unknown map: ${resolvedMapId}`);
-    // Named/fixed maps (the MAPS table) were authored before spatial geometry
-    // existed, so they have rooms but no x/y layout — which left the client with
-    // "NO SPATIAL MAP" and no way to walk around. If a resolved map is missing
-    // geometry, generate it now from its room list. Named maps don't declare an
-    // adjacency graph (they're treated as fully reachable), so we synthesize a
-    // connected layout: a central spawn linked to a ring of the other rooms.
+    
+    // Auto-generate geometry for legacy maps that don't have it, so IsoStage renders
     if (!resolved.geometry) {
-      const rooms = resolved.rooms || [];
-      const spawn = resolved.spawnRoom || rooms[0];
-      const adjacency = resolved.adjacency || (() => {
-        const adj = {}; rooms.forEach((r) => (adj[r] = []));
-        const others = rooms.filter((r) => r !== spawn);
-        // hub-and-spoke: spawn connects to all; ring connects neighbors so the
-        // layout spreads out instead of stacking on one point.
-        others.forEach((r) => { adj[spawn].push(r); adj[r].push(spawn); });
-        for (let i = 0; i < others.length; i++) {
-          const a = others[i], b = others[(i + 1) % others.length];
-          if (a !== b && !adj[a].includes(b)) { adj[a].push(b); adj[b].push(a); }
-        }
-        return adj;
-      })();
-      resolved = { ...resolved, adjacency, geometry: buildGeometry(rooms, adjacency, spawn) };
+      // Need a deep clone to avoid mutating the shared MAPS constant across instances
+      resolved = JSON.parse(JSON.stringify(resolved));
+      resolved.geometry = buildGeometry(resolved.rooms, resolved.adjacency, resolved.spawnRoom);
     }
+    
     this.config.mapId = resolved.id || resolvedMapId;
     this.map = resolved;
     this.mode = getMode(this.config.mode); // active game mode (null = base rules)
@@ -98,23 +81,13 @@ export class GameEngine {
     this.hull = HULL.MAX;         // 0 => crew loss
     this.distance = 0;            // toward JOURNEY.DISTANCE => crew win
     this.lastAttackAt = 0;        // attack-wave cadence
-    // ---- turret-defense attack waves ----
-    this.attack = null;           // { planesLeft, startedAt, lastDamageAt, source } when active
-    this.attackWarnUntil = null;  // if set, an attack is incoming at this time (10s warning)
-    this.pendingAttackSource = null;
-    this.nextRandomAttackAt = null; // scheduled time of the next random attack
-    this.turretOccupants = {};    // turretRoom -> playerId (one per turret)
-    this.callAttackCdUntil = 0;   // separate cooldown gate for CALL_ATTACK sabotage
-    this.planesByPlayer = {};     // playerId -> planes they've personally downed
-    // ---- airlock / outside ----
-    this.airlockLocked = false;   // impostor can lock the door from inside
-    this.airlockDistress = new Set(); // outside players banging for help (crew see it)
-    // Crew toggle their own system's draw at stations. Engines ON forces shields OFF.
-    this.systems = { oxygenOn: true };
-    // Helm power allocation: 0 = all shields (slow, safe), 1 = all engines (fast,
-    // exposed). `allocation` ramps toward `targetAllocation` gradually.
-    this.allocation = HELM.START_ALLOCATION;
-    this.targetAllocation = HELM.START_ALLOCATION;
+    // Crew route power between shields and engines using a 5-level slider (0=100% Shield, 5=100% Engine)
+    this.systems = { engineLevel: 0 };
+    this.airlockLocked = false;     // true when airlock sabotage is active
+    this.airlockBanging = new Set(); // playerIds banging on the airlock door
+    this.globalAttack = null;        // { startedAt, shipsTotal: 10, shipsDestroyed: 0, shipsEscaped: 0, difficulty: 1 }
+    this.globalAttackCdUntil = 30;   // cooldown before next attack can start (first attack waits 30s)
+    this.helmMomentum = { target: 0, current: 0 }; // for gradual speed changes
     // ---- v0.4 perk draft ----
     this.draft = null;          // { candidates:[keys], votes:Map(voterId->Set(keys)), startedAt }
     this.activePerks = [];      // resolved perk keys in effect this match
@@ -154,23 +127,11 @@ export class GameEngine {
   }
 
   // Center of a room in world units (or null coords if the map has no geometry).
-  _spawnXY(room, seatIndex = null) {
+  _spawnXY(room) {
     const r = this.map.geometry?.rooms?.[room];
     if (!r) return { x: null, y: null, tx: null, ty: null };
-    let cx = r.x + r.w / 2, cy = r.y + r.h / 2;
-    // If a seat index is given, scatter players around the room so they don't
-    // stack on the exact same pixel at spawn. Spiral/ring placement scaled to room.
-    if (seatIndex != null && seatIndex > 0) {
-      const ring = Math.floor((seatIndex - 1) / 8) + 1;
-      const slot = (seatIndex - 1) % 8;
-      const ang = (slot / 8) * Math.PI * 2;
-      const rad = Math.min(r.w, r.h) * 0.26 * ring;
-      cx += Math.cos(ang) * rad;
-      cy += Math.sin(ang) * rad;
-    }
-    const rects = blockersForRoom(room, r);
-    const free = nearestFree(cx, cy, rects);
-    return { x: free.x, y: free.y, tx: free.x, ty: free.y };
+    const cx = r.x + r.w / 2, cy = r.y + r.h / 2 + 150; // offset below center furniture
+    return { x: cx, y: cy, tx: cx, ty: cy };
   }
 
   // Which room contains a world point (or null). Used to derive room from x/y.
@@ -194,8 +155,7 @@ export class GameEngine {
     if (!p) return;
     if (this.phase === PHASE.LOBBY) this.players.delete(id);
     else p.connected = false;
-    // Public announcement so the crew sees who dropped (name + whether mid-match).
-    this._log("player_left", { id, name: p.name, midMatch: this.phase === PHASE.ACTIVE });
+    this._log("player_left", { id });
   }
 
   // ---------- perk draft (before roles are revealed) ----------
@@ -282,9 +242,6 @@ export class GameEngine {
       case "sabFuseMult": return e.sabFuseMult ?? 1;
       case "attackInterval": return HULL.ATTACK_INTERVAL_SEC * (c.attackIntervalMult ?? 1);
       case "attackDamageMult": return c.attackDamageMult ?? 1;
-      // Helm ramp speed: <1 = faster speed/slow changes, >1 = slower. Perks
-      // (e.g. AGILE_THRUSTERS) and host config can tune it; product of both.
-      case "helmRampMult": return (e.helmRampMult ?? 1) * (c.helmRampMult ?? 1);
       default: return base;
     }
   }
@@ -317,19 +274,14 @@ export class GameEngine {
       const p = this.players.get(id);
       p.role = impostors.has(id) ? ROLE.IMPOSTOR : ROLE.CREW;
       p.tasks = this._assignTasks(ROOM_TASKS);
-      if (impostors.has(id)) this.cooldowns[id] = { cable: this._eff("cableCooldown") };
+      if (impostors.has(id)) this.cooldowns[id] = { cable: this.now + 30 };
     }
-    // Scatter everyone around the spawn room so they don't stack on one pixel.
-    ids.forEach((id, i) => {
-      const p = this.players.get(id);
-      const pos = this._spawnXY(this.map.spawnRoom, i + 1);
-      p.x = pos.x; p.y = pos.y; p.tx = pos.tx; p.ty = pos.ty; p.room = this.map.spawnRoom;
-    });
     const crewIds = ids.filter((id) => this.players.get(id).role === ROLE.CREW);
     this.commanderId = shuffle(crewIds, this.rng)[0];
 
     this.phase = PHASE.ACTIVE;
     this.voteRoundStartedAt = this.now;
+    this.globalSabotageCdUntil = this.now + 30;
     this._log("match_started", { playerCount: ids.length, impostorCount, commanderId: this.commanderId, perks: this.activePerks });
 
     // Hand off to the active mode (if any) to set up its own roles/state. The mode
@@ -338,7 +290,7 @@ export class GameEngine {
       this.mode.onMatchStart(this);
       // Ensure every infected/hunter has a cable cooldown entry.
       for (const p of this.players.values()) {
-        if (p.role === ROLE.IMPOSTOR && !this.cooldowns[p.id]) this.cooldowns[p.id] = { cable: this._eff("cableCooldown") };
+        if (p.role === ROLE.IMPOSTOR && !this.cooldowns[p.id]) this.cooldowns[p.id] = { cable: this.now + 30 };
       }
     }
     return { impostorCount, perks: this.activePerks, mode: this.mode?.id || null };
@@ -346,36 +298,24 @@ export class GameEngine {
 
 
   _assignTasks(templateSet) {
-    const rooms = shuffle(this.map.rooms, this.rng).slice(0, Math.min(3, this.map.rooms.length));
     const energy = templateSet === ENERGY_TASKS;
     const gamePool = energy ? ENERGY_GAMES : PHYSICAL_GAMES;
+    const validRooms = this.map.rooms.filter(r => 
+      r !== "Space" && 
+      (templateSet[r] || templateSet[r.replace(/\s+\d+$/, "")])
+    );
+    const chosenRooms = shuffle(validRooms, this.rng).slice(0, Math.min(2, validRooms.length));
     const tasks = [];
-    for (const room of rooms) {
-      // Generated rooms may be named "Labs 2", "Corridor 3" — fall back to the
-      // base type (strip a trailing number) so they still get themed tasks.
+    for (const room of chosenRooms) {
       const baseType = room.replace(/\s+\d+$/, "");
       const template = templateSet[room] || templateSet[baseType] || ["Run a system diagnostic", "Recalibrate instruments"];
-      const pool = shuffle(template, this.rng).slice(0, this.map.tasksPerRoom);
-      const rect = this.map.geometry?.rooms?.[room];
-      let idx = 0;
-      for (const name of pool) {
-        const game = gamePool[Math.floor(this.rng() * gamePool.length)];
-        // place the task marker at a spread-out spot in the room (avoids overlap
-        // and keeps it off the central walking lane). Falls back to room center.
-        let tx = null, ty = null;
-        if (rect) {
-          const spots = [[0.25, 0.28], [0.75, 0.28], [0.25, 0.74], [0.75, 0.74], [0.5, 0.2]];
-          const [fx, fy] = spots[idx % spots.length];
-          tx = rect.x + fx * rect.w; ty = rect.y + fy * rect.h;
-        }
-        tasks.push({
-          id: newId("task"), room, name, done: false,
-          game, minSeconds: MINIGAMES[game].minSeconds,
-          x: tx, y: ty,        // world position of the interactable "!" marker
-          startedAt: null, // set when the player begins the mini-game
-        });
-        idx++;
-      }
+      const name = template[Math.floor(this.rng() * template.length)];
+      const game = gamePool[Math.floor(this.rng() * gamePool.length)];
+      tasks.push({
+        id: newId("task"), room, name, done: false,
+        game, minSeconds: MINIGAMES[game].minSeconds,
+        startedAt: null,
+      });
     }
     return tasks;
   }
@@ -398,9 +338,10 @@ export class GameEngine {
   _tasksFrozen() { return this._anySab("freezesTasks"); }       // EMP
   _lightsOut() { return this._anySab("lightsOut"); }            // Lights Out
   _attractActive() { return this._anySab("attractsAttackers"); } // Position Leaked
-  // The oxygen machine (refill stations) only works if the oxygen system is
-  // toggled on AND the power pool isn't empty AND life support isn't sabotaged.
-  _oxygenOnline() { return this.systems.oxygenOn && this.power > 0 && !this._refillDisabled(); }
+  // The oxygen machine (refill stations) only works if the power pool isn't empty AND life support isn't sabotaged.
+  _oxygenOnline() { return this.power > 0 && !this._refillDisabled(); }
+  // Shields are considered "up" if they have any power routed to them (momentum < 5)
+  _shieldsUp() { return Math.floor(this.helmMomentum.current) < 5; }
 
   // ---------- comms: voice commands, speech, and captions ----------
   // Who hears a given speaker? Routing rules:
@@ -471,53 +412,6 @@ export class GameEngine {
     return { recipients };
   }
 
-  // ---------- player reports ----------
-  // A player flags another for review (e.g. a name or behavior that slipped past
-  // the filter). We collect reports so the net layer can forward them to the
-  // backend for moderation. Deliberately lightweight: it doesn't punish anyone
-  // in-match, it just records the flag.
-  reportPlayer(reporterId, targetId, reason = null) {
-    const reporter = this._player(reporterId);
-    const target = this.players.get(targetId);
-    if (!target) throw new Error("No such player to report.");
-    if (targetId === reporterId) throw new Error("You can't report yourself.");
-    this._reports = this._reports || [];
-    // de-dupe: one report per reporter->target
-    if (this._reports.some((r) => r.reporterId === reporterId && r.targetId === targetId)) {
-      return { ok: true, deduped: true };
-    }
-    this._reports.push({
-      reporterId, reporterName: reporter.name,
-      targetId, targetName: target.name,
-      reason: reason ? String(reason).slice(0, 120) : "unspecified",
-      at: this.now, matchId: this.id || null,
-    });
-    this._log("player_reported", { targetId, private: true, recipients: [reporterId] });
-    return { ok: true };
-  }
-  drainReports() { const r = this._reports || []; this._reports = []; return r; }
-
-  // ---------- emotes ----------
-  // An expressive emote pops a bubble above the player for same-room viewers and
-  // carries a sound cue. Cosmetic emotes the player owns are allowed too (passed
-  // as a free-form key); otherwise it must be in the base EMOTES set.
-  sendEmote(playerId, emoteKey) {
-    this._requireActive();
-    const p = this._player(playerId);
-    const base = EMOTES[emoteKey];
-    const owns = (p.loadout?.emote === emoteKey) || (Array.isArray(p.ownedEmotes) && p.ownedEmotes.includes(emoteKey));
-    if (!base && !owns) throw new Error("Unknown emote.");
-    const recipients = this._commRecipients(p);
-    this._log("comm", {
-      kind: "emote",
-      from: playerId, fromName: p.name, fromPlane: p.plane,
-      emote: emoteKey, emoji: base?.emoji || "✨", kanji: base?.kanji || null,
-      sound: base?.sound || "emote_sparkle",
-      recipients, caption: true, private: true,
-    });
-    return { recipients };
-  }
-
   // ---------- movement ----------
   // Room-based move. With geometry, this sets the destination to the room's
   // center and the player glides there over ticks (real-time). Without geometry
@@ -533,11 +427,8 @@ export class GameEngine {
     }
     const g = this.map.geometry?.rooms?.[room];
     if (g) {
-      // glide the avatar toward a free point in the room (avoiding furniture), and
-      // commit room membership now (the player chose to enter an adjacent room).
-      const free = nearestFree(g.x + g.w / 2, g.y + g.h / 2, blockersForRoom(room, g));
-      p.tx = free.x; p.ty = free.y;
-      p.room = room;
+      // glide to the room center
+      p.tx = g.x + g.w / 2; p.ty = g.y + g.h / 2;
     } else {
       p.room = room; // teleport (legacy/no-geometry)
     }
@@ -556,106 +447,136 @@ export class GameEngine {
     p.ty = Math.max(0, Math.min(g.worldH, y));
   }
 
+  _respawn(playerId, spawnRoomId = "Helm") {
+    const p = this._requireAlive(playerId);
+    p.plane = PLANE.PHYSICAL;
+    const g = this.map.geometry;
+    const r = g.rooms[spawnRoomId];
+    if (r) {
+      // spawn outside the 160x160 furniture box
+      const signX = this.rng.next() > 0.5 ? 1 : -1;
+      const signY = this.rng.next() > 0.5 ? 1 : -1;
+      p.x = r.x + r.w / 2 + signX * this.rng.range(120, 250);
+      p.y = r.y + r.h / 2 + signY * this.rng.range(120, 250);
+      p.tx = p.x; p.ty = p.y;
+    }
+  }
+
+  setRunning(playerId, running) {
+    const p = this._player(playerId);
+    p.running = running;
+  }
+
+  _isValidPosition(x, y) {
+    const g = this.map.geometry;
+    if (!g) return true;
+
+    const CORR_HW = 250;       // corridor half-width in world units — must match visual hw in IsoStage (was 500)
+
+    // Helper: clamp t onto a segment and return perpendicular distance
+    const nearSegment = (px, py, ax, ay, bx, by) => {
+      const dx = bx - ax, dy = by - ay;
+      const l2 = dx * dx + dy * dy;
+      if (l2 === 0) return Math.hypot(px - ax, py - ay);
+      let t = ((px - ax) * dx + (py - ay) * dy) / l2;
+      t = Math.max(0, Math.min(1, t));
+      return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+    };
+
+    // Helper: find the point on a room's boundary in direction (ux,uy) from center
+    const wallExit = (r, ux, uy) => {
+      const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+      const hw = r.w / 2, hh = r.h / 2;
+      // t to hit x-edge, y-edge — take the nearest
+      const tx = Math.abs(ux) > 1e-6 ? hw / Math.abs(ux) : Infinity;
+      const ty = Math.abs(uy) > 1e-6 ? hh / Math.abs(uy) : Infinity;
+      const t = Math.min(tx, ty);
+      return { x: cx + ux * t, y: cy + uy * t };
+    };
+
+    // 1) Inside a room?
+    let insideFloor = false;
+    for (const [name, r] of Object.entries(g.rooms)) {
+      if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) {
+        insideFloor = true;
+        break;
+      }
+    }
+
+    // 2) Inside a corridor gap (between the two room walls)?
+    if (!insideFloor) {
+      for (const [a, b] of g.corridors) {
+        const ra = g.rooms[a], rb = g.rooms[b];
+        if (!ra || !rb) continue;
+        const ax = ra.x + ra.w / 2, ay = ra.y + ra.h / 2;
+        const bx = rb.x + rb.w / 2, by = rb.y + rb.h / 2;
+        const len = Math.hypot(bx - ax, by - ay);
+        if (len === 0) continue;
+        const ux = (bx - ax) / len, uy = (by - ay) / len;
+        // Wall-exit points (where corridor mouth is)
+        const startPt = wallExit(ra, ux, uy);
+        const endPt   = wallExit(rb, -ux, -uy);
+        // Gap length — only valid if rooms don't overlap
+        const gapLen = Math.hypot(endPt.x - startPt.x, endPt.y - startPt.y);
+        if (gapLen < 10) {
+          // Rooms touch or overlap — allow movement through the whole center-to-center segment
+          if (nearSegment(x, y, ax, ay, bx, by) <= CORR_HW) { insideFloor = true; break; }
+        } else {
+          if (nearSegment(x, y, startPt.x, startPt.y, endPt.x, endPt.y) <= CORR_HW) { insideFloor = true; break; }
+        }
+      }
+    }
+
+    return insideFloor;
+  }
+
   // Advance every player toward their destination by dt seconds. Called by tick.
   _integrateMovement(dt) {
     if (!this.map.geometry) return;
-    const baseSpeed = MOVE.SPEED_PER_SEC * (this.config.moveSpeedMult ?? 1) * dt;
     for (const p of this.players.values()) {
       if (p.plane === PLANE.ELIMINATED) continue;
       if (p.tx == null || p.x == null) continue;
-      // Bots move at human walking speed. Humans steer with frequent short nudges
-      // (which naturally caps their pace); bots target far room-centers and would
-      // otherwise glide faster, so we damp them slightly to match the felt speed.
-      const speed = p.isBot ? baseSpeed * MOVE.BOT_SPEED_MULT : baseSpeed;
-      const prevX = p.x, prevY = p.y;
+      const speed = MOVE.SPEED_PER_SEC * (this.config.moveSpeedMult ?? 1) * dt;
       const dx = p.tx - p.x, dy = p.ty - p.y;
       const dist = Math.hypot(dx, dy);
-      let nx, ny;
-      if (dist <= MOVE.ARRIVE_EPS) { nx = p.tx; ny = p.ty; }
-      else { const k = Math.min(1, speed / dist); nx = p.x + dx * k; ny = p.y + dy * k; }
-      // Collision: block movement through furniture. Outside players ignore it
-      // (they're in the void on a tether, not walking the room). Check blockers of
-      // the room at the intended destination AND the current room (covers edges).
-      if (!p.outside) {
-        const rects = this._blockersNear(nx, ny, p.x, p.y);
-        if (rects.length) { const r = resolveMove(p.x, p.y, nx, ny, rects); nx = r.x; ny = r.y; }
+      if (dist <= MOVE.ARRIVE_EPS) {
+        if (this._isValidPosition(p.tx, p.ty)) { p.x = p.tx; p.y = p.ty; }
+      } else {
+        const k = Math.min(1, speed / dist);
+        const nextX = p.x + dx * k;
+        const nextY = p.y + dy * k;
+        if (this._isValidPosition(nextX, nextY)) {
+          p.x = nextX;
+          p.y = nextY;
+        } else {
+          // Angle-sweep sliding: find the closest valid movement vector
+          let slid = false;
+          const a0 = Math.atan2(dy, dx);
+          for (let deg = 10; deg <= 85; deg += 10) {
+            for (const sign of [1, -1]) {
+              const a = a0 + sign * deg * Math.PI / 180;
+              // move at slightly reduced speed when sliding to prevent jitter
+              const nx = p.x + Math.cos(a) * speed * dt * 0.9;
+              const ny = p.y + Math.sin(a) * speed * dt * 0.9;
+              if (this._isValidPosition(nx, ny)) {
+                p.x = nx;
+                p.y = ny;
+                slid = true;
+                break;
+              }
+            }
+            if (slid) break;
+          }
+          if (!slid) {
+            p.tx = p.x;
+            p.ty = p.y;
+          }
+        }
       }
-      p.x = nx; p.y = ny;
-      // Keep the player on the walkable floor. If the new point is in the void,
-      // try sliding along each axis (so you glide along a wall instead of dead-
-      // stopping). Only if both axes are blocked do we hold position.
-      if (!p.outside && !this._isWalkable(p.x, p.y)) {
-        if (this._isWalkable(nx, prevY)) { p.x = nx; p.y = prevY; }        // slide horizontally
-        else if (this._isWalkable(prevX, ny)) { p.x = prevX; p.y = ny; }   // slide vertically
-        else { p.x = prevX; p.y = prevY; }                                  // truly cornered
-      }
+      // derive room from position; keep last known room if between cells
       const r = this._roomAt(p.x, p.y);
       if (r) p.room = r;
     }
-  }
-
-  // Is a world point on the walkable floor? True inside any room rect, or within
-  // a corridor band connecting two rooms' centers.
-  _isWalkable(x, y) {
-    const g = this.map.geometry; if (!g) return true;
-    for (const r of Object.values(g.rooms)) {
-      if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) return true;
-    }
-    const HALF = (MOVE.CORRIDOR_WIDTH || 90) / 2;
-    for (const [a, b] of g.corridors) {
-      const ra = g.rooms[a], rb = g.rooms[b]; if (!ra || !rb) continue;
-      const ax = ra.x + ra.w / 2, ay = ra.y + ra.h / 2;
-      const bx = rb.x + rb.w / 2, by = rb.y + rb.h / 2;
-      if (this._distToSegment(x, y, ax, ay, bx, by) <= HALF) return true;
-    }
-    return false;
-  }
-  _distToSegment(px, py, ax, ay, bx, by) {
-    const dx = bx - ax, dy = by - ay;
-    const len2 = dx * dx + dy * dy || 1;
-    let t = ((px - ax) * dx + (py - ay) * dy) / len2;
-    t = Math.max(0, Math.min(1, t));
-    const cx = ax + t * dx, cy = ay + t * dy;
-    return Math.hypot(px - cx, py - cy);
-  }
-  // Walk back from (x,y) toward the previous (safe) point until we're on floor.
-  _nearestWalkable(x, y, fromX, fromY) {
-    if (fromX == null) return { x, y };
-    for (let t = 0.1; t <= 1; t += 0.1) {
-      const cx = x + (fromX - x) * t, cy = y + (fromY - y) * t;
-      if (this._isWalkable(cx, cy)) return { x: cx, y: cy };
-    }
-    return { x: fromX, y: fromY };
-  }
-
-  // All furniture blockers in world space, keyed by room (cached). For the client
-  // renderer + so click-to-move can visualize obstacles.
-  _allBlockers() {
-    if (this._allBlockerCache) return this._allBlockerCache;
-    const g = this.map.geometry; if (!g) return {};
-    const out = {};
-    for (const [name, rect] of Object.entries(g.rooms)) {
-      const b = blockersForRoom(name, rect);
-      if (b.length) out[name] = b;
-    }
-    this._allBlockerCache = out;
-    return out;
-  }
-
-  // Gather furniture blockers for the room(s) under the given points (cached per
-  // match since geometry is fixed). Usually one room; two near a doorway.
-  _blockersNear(ax, ay, bx, by) {
-    if (!this._blockerCache) this._blockerCache = {};
-    const rooms = new Set([this._roomAt(ax, ay), this._roomAt(bx, by)].filter(Boolean));
-    let out = [];
-    for (const name of rooms) {
-      if (!(name in this._blockerCache)) {
-        const rect = this.map.geometry.rooms[name];
-        this._blockerCache[name] = rect ? blockersForRoom(name, rect) : [];
-      }
-      out = out.concat(this._blockerCache[name]);
-    }
-    return out;
   }
 
   // ---------- commander: energy allocation ----------
@@ -679,50 +600,66 @@ export class GameEngine {
     if (p.plane !== PLANE.PHYSICAL) throw new Error("No tank to refill on the energy plane.");
     if (!this.map.refillRooms.includes(p.room)) throw new Error("No refill station here.");
     if (this._refillDisabled()) throw new Error("Refill stations are offline — life support is down.");
-    if (!this.systems.oxygenOn) throw new Error("Oxygen machine is switched off — power it at a station.");
     if (this.power <= 0) throw new Error("No power — the oxygen machine is dead until tasks generate more.");
     p.oxygen = OXYGEN.MAX;
     this._log("refill", { id: playerId, room: p.room });
   }
 
-  // ---------- crew: ship systems ----------
-  // Oxygen remains a simple on/off station. Engines & shields are now a single
-  // ALLOCATION slider controlled at the Helm (see setAllocation) — no more hard
-  // engines/shields toggle.
-  setSystem(playerId, system, on) {
+  // ---------- crew: control power routing ----------
+  // Set the engine level (0 to 5), routing power from shields to engines.
+  // Must be at the Helm console; sets the momentum target (actual speed eases toward it).
+  setEngineLevel(playerId, level) {
     this._requireActive();
     const p = this._player(playerId);
     if (p.plane !== PLANE.PHYSICAL) throw new Error("Downed players can't run ship systems.");
-    on = !!on;
-    if (system === "oxygen") {
-      this.systems.oxygenOn = on;
-    } else if (system === "engines" || system === "shields") {
-      // Back-compat shim: treat as a coarse allocation nudge so older callers/tests
-      // still work. engines:true => full engines; shields:true => full shields.
-      this.setAllocation(playerId, system === "engines" ? (on ? 1 : 0.5) : (on ? 0 : 0.5));
-      return;
-    } else {
-      throw new Error("Unknown system.");
-    }
-    this._log("system_set", { system, on });
+    if (p.room !== 'Helm') throw new Error("You must be at the Helm to adjust engine level.");
+    
+    const lvl = Math.max(0, Math.min(5, Math.floor(level)));
+    this.helmMomentum.target = lvl;
+    this._log("engine_level_set", { level: lvl });
   }
 
-  // ---------- Helm: engines<->shields power allocation ----------
-  // Anyone standing at the Helm can set the target allocation (0..1). The actual
-  // allocation ramps toward it over time (slow to speed up, quick to slow down).
-  setAllocation(playerId, value) {
+  // ---------- spacewalk: airlock interaction ----------
+  bangDoor(playerId) {
     this._requireActive();
     const p = this._player(playerId);
-    if (p.plane !== PLANE.PHYSICAL) throw new Error("Downed players can't pilot.");
-    if (p.room !== (this.map.spawnRoom || "Helm")) throw new Error("Adjust power allocation at the Helm.");
-    this.targetAllocation = Math.max(0, Math.min(1, value));
-    this._log("allocation_set", { target: Math.round(this.targetAllocation * 100) });
-    return { target: this.targetAllocation };
+    if (p.room !== 'Space' && p.room !== 'Airlock') throw new Error("You're not near the airlock.");
+    this.airlockBanging.add(playerId);
+    this._log("airlock_bang", { id: playerId, name: p.name });
   }
-  // Effective shield strength 0..1 (more = less attack damage). Full when all
-  // power is in shields (allocation 0), zero at full engines (allocation 1).
-  _shieldStrength() { return 1 - this.allocation; }
-  _shieldsUp() { return this._shieldStrength() > 0.35; } // back-compat: "shields effectively up"
+
+  openAirlock(playerId) {
+    this._requireActive();
+    const p = this._player(playerId);
+    if (p.room !== 'Airlock') throw new Error("You must be at the Airlock.");
+    if (p.plane !== PLANE.PHYSICAL) throw new Error("Only physical players can open the airlock.");
+    if (this.airlockLocked) {
+      // Check if there's actually an active AIRLOCK_LOCKDOWN sabotage preventing unlock
+      const hasLockdownSab = this.sabotages.has('AIRLOCK_LOCKDOWN');
+      if (hasLockdownSab) throw new Error("Airlock is locked down — resolve the sabotage first.");
+      this.airlockLocked = false;
+    }
+    this.airlockBanging.clear();
+    this._log("airlock_opened", { by: playerId });
+  }
+
+  // ---------- turret: shoot incoming attack ships ----------
+  shootTurretShip(playerId) {
+    this._requireActive();
+    const p = this._player(playerId);
+    const turretRooms = this.map.turretRooms || [];
+    if (!turretRooms.includes(p.room)) throw new Error("You must be in a turret room.");
+    if (!this.globalAttack) throw new Error("No attack in progress.");
+    if (this.now < this.globalAttack.warningUntil) throw new Error("Attack incoming — brace yourself!");
+    this.globalAttack.shipsDestroyed++;
+    const shipsLeft = this.globalAttack.shipsTotal - this.globalAttack.shipsDestroyed - this.globalAttack.shipsEscaped;
+    if (shipsLeft <= 0) {
+      this._log("attack_ended", { destroyed: this.globalAttack.shipsDestroyed, escaped: this.globalAttack.shipsEscaped, total: this.globalAttack.shipsTotal });
+      this.globalAttackCdUntil = this.now + 45 + Math.floor(this.rng() * 46); // 45-90s cooldown
+      this.globalAttack = null;
+    }
+    return { hit: true, shipsLeft: Math.max(0, shipsLeft) };
+  }
 
   // ---------- repair: divert shield energy into the hull ----------
   // Costs a chunk of power, heals some hull. No journey progress. Only at repair
@@ -738,139 +675,6 @@ export class GameEngine {
     this._log("repair", { id: playerId, hull: Math.round(this.hull) });
   }
 
-  // ---------- turret defense ----------
-  // Enter a turret. Only ONE player may occupy a turret at a time; you must be
-  // standing in the turret's room. Returns the turret room you took.
-  enterTurret(playerId) {
-    this._requireActive();
-    const p = this._player(playerId);
-    if (p.plane !== PLANE.PHYSICAL) throw new Error("Downed players can't man turrets.");
-    if (!(this.map.turretRooms || []).includes(p.room)) throw new Error("You're not in a turret.");
-    const occupant = this.turretOccupants[p.room];
-    if (occupant && occupant !== playerId) throw new Error("This turret is already manned.");
-    // leave any other turret you were in
-    for (const [room, occ] of Object.entries(this.turretOccupants)) if (occ === playerId) delete this.turretOccupants[room];
-    this.turretOccupants[p.room] = playerId;
-    this._log("turret_manned", { id: playerId, room: p.room, private: true, recipients: [playerId] });
-    return { turret: p.room };
-  }
-  leaveTurret(playerId) {
-    for (const [room, occ] of Object.entries(this.turretOccupants)) if (occ === playerId) delete this.turretOccupants[room];
-  }
-  // Fire from your turret at the incoming swarm. Server-enforces a per-shot
-  // cooldown so you can't auto-fire, and only counts while an attack is active.
-  shootPlane(playerId) {
-    this._requireActive();
-    const p = this._player(playerId);
-    const turret = Object.entries(this.turretOccupants).find(([, occ]) => occ === playerId)?.[0];
-    if (!turret || p.room !== turret) throw new Error("Man a turret first.");
-    if (!this.attack) throw new Error("No incoming attack.");
-    const cd = this.cooldowns[playerId]?.shot || 0;
-    if (this.now < cd) throw new Error("Reloading.");
-    (this.cooldowns[playerId] ||= {}).shot = this.now + ATTACK.SHOT_COOLDOWN_SEC;
-    const downed = Math.min(ATTACK.PLANES_PER_SHOT, this.attack.planesLeft);
-    this.attack.planesLeft -= downed;
-    this.planesByPlayer[playerId] = (this.planesByPlayer[playerId] || 0) + downed;
-    this._log("plane_downed", { id: playerId, by: p.name, planesLeft: this.attack.planesLeft });
-    if (this.attack.planesLeft <= 0) this._endAttack("repelled");
-    return { planesLeft: this.attack.planesLeft, yourTotal: this.planesByPlayer[playerId] };
-  }
-  // Begin an attack wave (random timer or CALL_ATTACK sabotage).
-  startAttack(source = "random") {
-    if (this.attack) return; // one at a time
-    this.attack = { planesLeft: ATTACK.SWARM_SIZE, startedAt: this.now, lastDamageAt: this.now, source };
-    this._log("attack_incoming", { swarm: ATTACK.SWARM_SIZE, source });
-  }
-  // Announce an incoming attack with a warning window (like a sabotage alert), so
-  // crew can rush to the Helm + turrets before it lands.
-  _warnAttack(source) {
-    if (this.attack || this.attackWarnUntil != null) return;
-    this.attackWarnUntil = this.now + ATTACK_WARNING_SECONDS;
-    this.pendingAttackSource = source;
-    this._log("attack_warning", { source, inSeconds: ATTACK_WARNING_SECONDS });
-  }
-  _endAttack(reason) {
-    if (!this.attack) return;
-    this._log("attack_ended", { reason, hull: Math.round(this.hull) });
-    this.attack = null;
-    // schedule the next random one
-    this.nextRandomAttackAt = this.now + ATTACK.RANDOM_MIN_SEC + this.rng() * (ATTACK.RANDOM_MAX_SEC - ATTACK.RANDOM_MIN_SEC);
-  }
-
-  // ---------- airlock / going outside ----------
-  // Step out through the airlock onto the tether. Must be in the airlock room and
-  // the door must be unlocked. Outside, oxygen burns fast (see tick).
-  goOutside(playerId) {
-    this._requireActive();
-    const p = this._player(playerId);
-    if (p.plane !== PLANE.PHYSICAL) throw new Error("Only living crew can go outside.");
-    if (p.room !== this.map.airlockRoom) throw new Error("You're not at the airlock.");
-    if (this.airlockLocked) throw new Error("The airlock is locked.");
-    if (p.outside) return { outside: true };
-    p.outside = true;
-    this._log("went_outside", { id: playerId, name: p.name });
-    return { outside: true };
-  }
-  // Come back in. Blocked if the door is locked (you're trapped until rescued).
-  comeInside(playerId) {
-    this._requireActive();
-    const p = this._player(playerId);
-    if (!p.outside) return { outside: false };
-    if (this.airlockLocked) throw new Error("The airlock is locked — bang for help!");
-    p.outside = false;
-    this.airlockDistress.delete(playerId);
-    this._log("came_inside", { id: playerId, name: p.name });
-    return { outside: false };
-  }
-  // Impostor locks the door from inside, trapping anyone outside.
-  lockAirlock(impostorId) {
-    this._requireActive();
-    const imp = this._player(impostorId);
-    if (imp.role !== ROLE.IMPOSTOR || imp.plane !== PLANE.PHYSICAL) throw new Error("Only living impostors can lock it.");
-    if (imp.room !== this.map.airlockRoom) throw new Error("You're not at the airlock.");
-    if (imp.outside) throw new Error("You can't lock it from outside.");
-    this.airlockLocked = true;
-    this._log("airlock_locked", { by: imp.name });
-  }
-  // Any living crew member in the airlock room can unlock it.
-  unlockAirlock(playerId) {
-    this._requireActive();
-    const p = this._player(playerId);
-    if (p.plane !== PLANE.PHYSICAL) throw new Error("Only living crew can unlock it.");
-    if (p.room !== this.map.airlockRoom) throw new Error("You're not at the airlock.");
-    if (p.outside) throw new Error("You must be inside to unlock it.");
-    if (!this.airlockLocked) return;
-    this.airlockLocked = false;
-    this._log("airlock_unlocked", { by: p.name });
-  }
-  // Trapped outside: bang on the door to raise a distress call all living crew see.
-  bangOnDoor(playerId) {
-    this._requireActive();
-    const p = this._player(playerId);
-    if (!p.outside) throw new Error("You're not outside.");
-    this.airlockDistress.add(playerId);
-    this._log("airlock_distress", { id: playerId, name: p.name });
-  }
-  // The soldering task done OUTSIDE — server-timed, and burns extra oxygen.
-  solderOutside(playerId) {
-    this._requireActive();
-    const p = this._player(playerId);
-    if (!p.outside) throw new Error("The hull solder task is done outside.");
-    p.oxygen = Math.max(0, p.oxygen - AIRLOCK.SOLDER_OXYGEN_COST);
-    this._log("soldered", { id: playerId, oxygen: Math.round(p.oxygen) });
-    return { oxygen: Math.round(p.oxygen) };
-  }
-  // Permanent freeze death (ran out of air in the void). NOT the energy plane.
-  _freeze(playerId) {
-    const p = this.players.get(playerId);
-    if (!p || p.plane === PLANE.ELIMINATED) return;
-    p.outside = false;
-    p.frozen = true;
-    this.airlockDistress.delete(playerId);
-    this._log("frozen_in_void", { id: playerId, name: p.name });
-    this._eliminate(playerId, "frozen");
-  }
-
   // ---------- crossing to the energy plane (replaces "death") ----------
   _down(playerId, cause) {
     const p = this._player(playerId);
@@ -882,15 +686,6 @@ export class GameEngine {
     }
     p.plane = PLANE.ENERGY;
     p.oxygen = 0;
-    // Leave a body on the floor where they died — living crew can stumble on it
-    // (the ghost itself becomes invisible to the living). Bodies persist for the
-    // rest of the match.
-    this.corpses = this.corpses || [];
-    this.corpses.push({
-      id: "corpse_" + playerId, playerId, name: p.name,
-      room: p.room, x: p.x ?? null, y: p.y ?? null,
-      idColor: p.idColor, at: this.now,
-    });
     // Fresh energy-themed tasks that feed the SAME shared bar.
     p.tasks = this._assignTasks(ENERGY_TASKS);
     this._log("downed", { id: playerId, cause, private: true }); // who/why is privileged info
@@ -910,20 +705,6 @@ export class GameEngine {
     this._checkWin();
   }
 
-  // A player surrenders / leaves an active match: they're removed from play
-  // (eliminated) and a public note is logged so the rest of the crew sees it.
-  // In lobby we just drop them entirely. Win conditions are re-checked so a
-  // surrender that tips the balance ends the match correctly.
-  surrender(playerId) {
-    const p = this.players.get(playerId);
-    if (!p) return;
-    if (this.phase === PHASE.LOBBY) { this.players.delete(playerId); return; }
-    if (this.phase !== PHASE.ACTIVE) return;
-    this._log("player_surrendered", { id: playerId, name: p.name });
-    p.surrendered = true;
-    this._eliminate(playerId, "surrender");
-  }
-
   // ---------- impostor: detach air cable ----------
   // Two-stage: pulling a PHYSICAL target crosses them to the energy plane; pulling
   // an ENERGY-plane target (impostor must also be on the energy plane) fully
@@ -940,9 +721,11 @@ export class GameEngine {
     if (target.plane === PLANE.ELIMINATED) throw new Error("Target is already gone.");
     if (target.plane !== imp.plane) throw new Error("Target is on a different plane.");
     if (target.room !== imp.room) throw new Error("Target not in your room.");
+    const dist = Math.hypot(target.x - imp.x, target.y - imp.y);
+    if (dist > 250) throw new Error("Target is too far away to pull their cable.");
     const cd = this.cooldowns[impostorId] || (this.cooldowns[impostorId] = { cable: 0 });
     if (this.now < cd.cable) throw new Error("Cable-pull on cooldown.");
-    cd.cable = this.now + this._eff("cableCooldown");
+    cd.cable = this.now + 15;
 
     // A mode may reinterpret the cable-pull (KotH shove; Who Did It arms a guess).
     if (this.mode?.onShove && this.mode.onShove(this, target, impostorId)) return;
@@ -950,6 +733,13 @@ export class GameEngine {
     // Stage by the plane both are on: physical => cross over; energy => eliminate.
     if (target.plane === PLANE.PHYSICAL) this._down(targetId, "cable_pull");
     else this._eliminate(targetId, "energy_cable_pull");
+
+    // Anyone in the same room witnesses the murder.
+    for (const q of this.players.values()) {
+      if (q.role === ROLE.CREW && q.plane === imp.plane && q.room === imp.room && q.id !== targetId) {
+        q.witnessedMurderer = impostorId;
+      }
+    }
 
     // Bounty hook: if the victim is flagged BOUNTY_TARGET for an active event and
     // both players have accounts, emit a claim the net layer reports to the
@@ -994,19 +784,6 @@ export class GameEngine {
     if (imp.role !== ROLE.IMPOSTOR || imp.plane !== PLANE.PHYSICAL) throw new Error("Only living impostors sabotage.");
     const def = SABOTAGE[kind];
     if (!def) throw new Error("Unknown sabotage.");
-
-    // CALL_ATTACK is special: it summons an attack wave rather than installing a
-    // persistent sabotage, and runs on its OWN cooldown (separate from the shared
-    // sabotage gate) so impostors can pressure the crew with attacks independently.
-    if (def.callsAttack) {
-      if (this.now < this.callAttackCdUntil) throw new Error("Attack beacon recharging.");
-      if (this.attack || this.attackWarnUntil != null) throw new Error("An attack is already underway.");
-      this.callAttackCdUntil = this.now + ATTACK.CALL_COOLDOWN_SEC;
-      this._warnAttack("sabotage");
-      this._log("sabotage_started", { kind, label: def.label, callsAttack: true });
-      return;
-    }
-
     if (this.sabotages.has(kind)) throw new Error("That sabotage is already active.");
     // Shared GLOBAL cooldown across all sabotage types (cable-pull is separate).
     if (this.now < this.globalSabotageCdUntil) throw new Error("Sabotage systems recharging.");
@@ -1080,31 +857,55 @@ export class GameEngine {
     if (task.done) throw new Error("Already done.");
     if (p.room !== task.room) throw new Error("You must be in the task's room.");
     if (this._tasksFrozen()) throw new Error("Systems are EMP-locked — repair the outage first.");
-    // Must have been started. We no longer enforce a minimum duration — when the
-    // player solves the mini-game the client reports completion and it counts
-    // immediately (no artificial wait). The abandon timeout still applies so a
-    // stale "started" task can be restarted cleanly.
+    // Must have been started, and enough server-time must have passed.
     if (task.startedAt == null) throw new Error("Start the task first.");
     const elapsed = this.now - task.startedAt;
     if (elapsed > TASK.ABANDON_SEC) { task.startedAt = null; throw new Error("Task timed out — start it again."); }
-    task.done = true;
-    task.startedAt = null;
+    if (elapsed < task.minSeconds - TASK.EARLY_GRACE_SEC) {
+      throw new Error("Too fast — finish the mini-game."); // the anti-cheat gate
+    }
+    p.tasks = p.tasks.filter((t) => t.id !== taskId);
+    p.lastCompletedRoom = task.room;
     this._log("task_attempt", { id: playerId, plane: p.plane });
 
     // PHYSICAL plane: impostor "tasks" are fake — they generate NO power.
     // ENERGY plane: every downed player's tasks count (design choice).
     const counts = p.plane === PLANE.ENERGY || p.role === ROLE.CREW;
     if (counts) {
-      // Ghosts (downed/energy plane) still help, but at reduced output — half the
-      // power a living crew member generates per task.
-      const ghostMult = p.plane === PLANE.ENERGY ? TASK.GHOST_POWER_MULT : 1;
-      const gain = Math.round(this._eff("taskPower") * ghostMult);
+      const gain = this._eff("taskPower");
       this.power = Math.min(this._eff("powerMax"), this.power + gain);
-      this._log("power_generated", { amount: gain, pool: Math.round(this.power), ghost: p.plane === PLANE.ENERGY });
-      if (p.tasks.every((t) => t.done)) {
-        p.tasks = this._assignTasks(p.plane === PLANE.ENERGY ? ENERGY_TASKS : ROOM_TASKS);
-      }
+      this._log("power_generated", { amount: gain, pool: Math.round(this.power) });
     }
+
+    // Refill tasks immediately so the player always has exactly 2 active tasks in 2 different rooms
+    if (p.plane === PLANE.PHYSICAL || p.plane === PLANE.ENERGY) {
+      const templateSet = p.plane === PLANE.ENERGY ? ENERGY_TASKS : ROOM_TASKS;
+      const gamePool = p.plane === PLANE.ENERGY ? ENERGY_GAMES : PHYSICAL_GAMES;
+      const otherActiveRoom = p.tasks[0]?.room;
+
+      const validRooms = this.map.rooms.filter(r => 
+        r !== "Space" && 
+        (templateSet[r] || templateSet[r.replace(/\s+\d+$/, "")]) &&
+        r !== p.lastCompletedRoom &&
+        r !== otherActiveRoom
+      );
+
+      const nextRoom = validRooms.length > 0 
+        ? validRooms[Math.floor(this.rng() * validRooms.length)] 
+        : p.lastCompletedRoom; // fallback
+
+      const baseType = nextRoom.replace(/\s+\d+$/, "");
+      const templates = templateSet[nextRoom] || templateSet[baseType] || ["Run a system diagnostic", "Recalibrate instruments"];
+      const name = templates[Math.floor(this.rng() * templates.length)];
+      const game = gamePool[Math.floor(this.rng() * gamePool.length)];
+
+      p.tasks.push({
+        id: newId("task"), room: nextRoom, name, done: false,
+        game, minSeconds: MINIGAMES[game].minSeconds,
+        startedAt: null,
+      });
+    }
+
     return { counted: counts, power: Math.round(this.power) };
   }
 
@@ -1189,80 +990,88 @@ export class GameEngine {
     // still get oxygen drain so air pressure matters. Infection opts back in.
     const baseSim = !this.mode || this.mode.usesBaseSimulation === true;
 
-    // 0) Power economy: active systems drain the pool. If the pool can't cover a
-    //    system this second, that system effectively goes dark for the tick.
+    // 0) Power economy: active systems drain the pool.
     let powered = true;
     if (baseSim) {
-    // Ramp the allocation toward its target: quick toward shields (slowdown),
-    // slow toward engines (speedup). Perks can scale the ramp rates.
-    if (this.allocation !== this.targetAllocation) {
-      const speedingUp = this.targetAllocation > this.allocation;
-      const seconds = (speedingUp ? HELM.SPEEDUP_SECONDS : HELM.SLOWDOWN_SECONDS) * this._eff("helmRampMult");
-      const step = (1 / Math.max(0.1, seconds)) * dt; // full 0..1 sweep over `seconds`
-      if (speedingUp) this.allocation = Math.min(this.targetAllocation, this.allocation + step);
-      else this.allocation = Math.max(this.targetAllocation, this.allocation - step);
+    // ---- Helm momentum: gradual speed changes ----
+    if (this.helmMomentum.target > this.helmMomentum.current) {
+      // Speeding up: takes 15 seconds to go 0->5
+      this.helmMomentum.current = Math.min(this.helmMomentum.target, this.helmMomentum.current + dt * (5 / 15));
+    } else if (this.helmMomentum.target < this.helmMomentum.current) {
+      // Slowing down: takes 5 seconds to go 5->0
+      this.helmMomentum.current = Math.max(this.helmMomentum.target, this.helmMomentum.current - dt * (5 / 5));
     }
 
-    // Power draw: oxygen as before; engines+shields together draw proportionally
-    // to the allocation split (the ship always spends on both ends of the slider).
     let draw = 0;
-    if (this.systems.oxygenOn) draw += POWER.OXYGEN_DRAW_PER_SEC * dt;
-    draw += POWER.ENGINE_DRAW_PER_SEC * this.allocation * dt;       // speed costs power
-    draw += POWER.SHIELD_DRAW_PER_SEC * this._shieldStrength() * dt; // protection costs power
+    const enginePct = this.helmMomentum.current / 5;
+    const shieldPct = 1 - enginePct;
+    
+    // Constant oxygen draw, plus scaled engine and shield draws.
+    draw += POWER.OXYGEN_DRAW_PER_SEC * dt;
+    draw += enginePct * POWER.ENGINE_DRAW_PER_SEC * dt;
+    draw += shieldPct * POWER.SHIELD_DRAW_PER_SEC * dt;
     powered = this.power >= draw;
     this.power = Math.max(0, this.power - draw);
 
-    // Journey advances at a rate proportional to engine allocation (and only while
-    // powered). Full speed at allocation 1, none at allocation 0 (all shields).
-    if (this.allocation > 0 && powered) {
+    // Journey advances scaled by engine power.
+    if (enginePct > 0 && powered) {
       const target = JOURNEY.DISTANCE * (this.config.journeyDistanceMult ?? 1);
-      this.distance = Math.min(target, this.distance + JOURNEY.ENGINE_SPEED_PER_SEC * this.allocation * dt);
+      const speed = JOURNEY.ENGINE_SPEED_PER_SEC * enginePct;
+      this.distance = Math.min(target, this.distance + speed * dt);
       if (this.distance >= target) {
         this.distanceReached = true;
+        // A mode may reinterpret "reached the location" (Infection => survivors escape).
         if (this.mode) { if (this._checkWin()) return; }
         else { this._end(WINNER.CREW, "reached_location"); return; }
       }
     }
 
-    // Combat: enemy planes only damage the hull during a DISCRETE ATTACK WAVE.
-    // Attacks start on a random timer or via the CALL_ATTACK sabotage. While one
-    // is active, every surviving plane chips the hull on a cadence; shields up
-    // (and powered) soak most of it. Crew end the attack by shooting all planes
-    // down from turrets (see shootPlane). Position-leaked makes hits harder.
-    const attract = this._attractActive();
-
-    // schedule the first random attack a bit after launch
-    if (this.nextRandomAttackAt == null) {
-      this.nextRandomAttackAt = this.now + ATTACK.RANDOM_MIN_SEC + this.rng() * (ATTACK.RANDOM_MAX_SEC - ATTACK.RANDOM_MIN_SEC);
-    }
-    // Random attacks are ANNOUNCED: when the timer is up, arm a warning window
-    // instead of striking immediately, giving crew ~10s to reach the Helm (slow
-    // down / shields up) and man the turrets.
-    if (!this.attack && this.attackWarnUntil == null && this.now >= this.nextRandomAttackAt) {
-      this._warnAttack("random");
-    }
-    // when the warning elapses, the attack actually lands
-    if (this.attackWarnUntil != null && this.now >= this.attackWarnUntil) {
-      const src = this.pendingAttackSource || "random";
-      this.attackWarnUntil = null; this.pendingAttackSource = null;
-      this.startAttack(src);
+    // Combat: global attack waves replace ambient damage.
+    // Random attacks trigger every 45-90 seconds (cooldown-based).
+    if (!this.globalAttack && this.now >= this.globalAttackCdUntil) {
+      // Start a new attack wave
+      this.globalAttack = {
+        startedAt: this.now,
+        shipsTotal: 20,
+        shipsDestroyed: 0,
+        shipsEscaped: 0,
+        warningUntil: this.now + 20,
+        difficulty: Math.max(1, this.helmMomentum.current),
+        _lastShipAt: this.now + 20, // track when the last ship spawned (starts after warning)
+      };
+      this._log("attack_incoming", { label: "INCOMING ATTACK" });
     }
 
-    if (this.attack) {
-      if (this.now - this.attack.startedAt >= ATTACK.MAX_DURATION_SEC) {
-        this._endAttack("withdrew");
-      } else if (this.now - this.attack.lastDamageAt >= ATTACK.DAMAGE_INTERVAL_SEC) {
-        this.attack.lastDamageAt = this.now;
-        // Damage scales CONTINUOUSLY with shield strength (the Helm allocation):
-        // full shields ~= the shielded floor, no shields ~= the unshielded max.
-        const ss = powered ? this._shieldStrength() : 0; // unpowered = no protection
-        const base = ATTACK.DMG_PER_TICK_UNSHIELDED - (ATTACK.DMG_PER_TICK_UNSHIELDED - ATTACK.DMG_PER_TICK_SHIELDED) * ss;
-        const swarmFactor = this.attack.planesLeft / ATTACK.SWARM_SIZE;
-        let dmg = base * this._eff("attackDamageMult") * (0.5 + 0.5 * swarmFactor);
-        if (attract) dmg *= ATTRACT.dmgFactor;
-        this.hull = Math.max(0, this.hull - dmg);
-        this._log("attack_damage", { dmg: Math.round(dmg), shieldStrength: Math.round(ss * 100), planesLeft: this.attack.planesLeft, hull: Math.round(this.hull) });
-        if (this.hull <= 0 && !this.mode) { this._end(WINNER.IMPOSTORS, "hull_destroyed"); return; }
+    // Process active global attack
+    if (this.globalAttack) {
+      const atk = this.globalAttack;
+      const pastWarning = this.now >= atk.warningUntil;
+      if (pastWarning) {
+        // Ships appear at a rate based on difficulty (higher engine = faster ships)
+        const shipInterval = Math.max(1, 4 - atk.difficulty * 0.5); // 1-3.5s between ships
+        const dealt = atk.shipsDestroyed + atk.shipsEscaped;
+        if (dealt < atk.shipsTotal && this.now - atk._lastShipAt >= shipInterval) {
+          atk._lastShipAt = this.now;
+          // A ship that isn't destroyed within its window deals 5 hull damage (lowered from 8)
+          atk.shipsEscaped++;
+          const attract = this._attractActive();
+          let dmg = 5;
+          // Scale damage based on speed: faster speed = heavier hits!
+          const speedFactor = 1 + this.helmMomentum.current;
+          dmg *= speedFactor;
+          dmg *= this._eff("attackDamageMult");
+          if (attract) dmg *= ATTRACT.dmgFactor;
+          this.hull = Math.max(0, this.hull - dmg);
+          this._log("attack", { dmg, shielded: shieldPct > 0.5, hull: Math.round(this.hull) });
+
+          if (this.hull <= 0 && !this.mode) { this._end(WINNER.IMPOSTORS, "hull_destroyed"); return; }
+        }
+        // Check if the attack is over
+        if (atk.shipsDestroyed + atk.shipsEscaped >= atk.shipsTotal) {
+          this._log("attack_ended", { destroyed: atk.shipsDestroyed, escaped: atk.shipsEscaped, total: atk.shipsTotal });
+          this.globalAttackCdUntil = this.now + 45 + Math.floor(this.rng() * 46); // 45-90s cooldown
+          this.globalAttack = null;
+        }
       }
     }
     } // end baseSim (power / journey / combat)
@@ -1270,18 +1079,35 @@ export class GameEngine {
     // 1) Oxygen drain for everyone still physical; empty tank => downed.
     //    (Refills require the oxygen machine to be powered — see refillOxygen.)
     //    The infiniteOxygen crazy toggle skips drain entirely.
-    //    OUTSIDE the airlock, oxygen drains much faster (it doubles as propulsion).
-    //    Running out while OUTSIDE is a permanent FREEZE death — no energy plane.
+    //    Players in Space drain 3x (O2 used for propulsion); 90s => frozen death.
     if (!this.config.infiniteOxygen) {
       for (const p of this._living()) {
-        const outside = !!p.outside;
-        const drain = this._eff("oxygenDrain") * (outside ? AIRLOCK.OUTSIDE_OXYGEN_MULT : 1);
-        p.oxygen = Math.max(0, p.oxygen - drain * dt);
-        if (p.oxygen <= 0) {
-          if (outside) this._freeze(p.id);     // permanent — they froze in the void
-          else this._down(p.id, "out_of_air");
+        let drainMult = 1;
+        if (p.room === 'Space') {
+          drainMult = 3; // spacewalkers use O2 for propulsion
+          // Track time in space for freeze death
+          if (!p.spaceEnteredAt) p.spaceEnteredAt = this.now;
+          if (this.now - p.spaceEnteredAt > 90) {
+            this._eliminate(p.id, 'frozen'); // permanent death
+            if (this.phase === PHASE.ENDED) return;
+            continue;
+          }
+        } else {
+          p.spaceEnteredAt = null; // clear when not in space
         }
+        // drain only if oxygen machine is dead or life-support sabotaged
+        if (this.power <= 0 || this._refillDisabled()) {
+          drainMult *= 3.0;
+        }
+        p.oxygen = Math.max(0, p.oxygen - this._eff("oxygenDrain") * drainMult * dt);
+        if (p.oxygen <= 0) this._down(p.id, "out_of_air");
         if (this.phase === PHASE.ENDED) return;
+      }
+    }
+    // Energy-plane players in Space can pass through Airlock freely (ghosts walk through doors)
+    for (const p of this.players.values()) {
+      if (p.plane === PLANE.ENERGY && p.room === 'Space') {
+        // No airlock restriction for ghosts — they phase through
       }
     }
 
@@ -1298,7 +1124,16 @@ export class GameEngine {
         }
         this.sabotages.delete(s.kind);
         this._log("sabotage_expired", { kind: s.kind });
+        // Airlock lockdown: unlock when the sabotage expires
+        if (s.kind === 'AIRLOCK_LOCKDOWN') this.airlockLocked = false;
       }
+    }
+    // Airlock lockdown sabotage: lock the airlock while active
+    if (this.sabotages.has('AIRLOCK_LOCKDOWN')) {
+      this.airlockLocked = true;
+    } else if (!this.sabotages.has('AIRLOCK_LOCKDOWN') && this.airlockLocked) {
+      // If the sabotage was resolved (not expired), also unlock
+      this.airlockLocked = false;
     }
 
     // 3) Vote clock: resolve at 2:00 (or by 3:00 grace).
@@ -1375,27 +1210,21 @@ export class GameEngine {
     const ended = this.phase === PHASE.ENDED;
     const privileged = iAmImpostor || iAmDowned || ended;
 
-    // Same-room-only visibility (hard walls): living players only see others in
-    // their own room. This is the core "social deduction" sightline — you can't
-    // watch the whole ship at once. Ghosts (downed) and post-game see everyone.
-    // Impostors get NO x-ray either (they must also walk to see), but they still
-    // learn each other's role below. Lights Out no longer changes sight (it's
-    // already restricted); it keeps its other effects.
-    const fullSight = iAmDowned || ended;
+    // Lights Out: non-privileged crew can't see other rooms — only players in
+    // their own room are visible; others are obscured. Impostors (nightvision)
+    // and ghosts/post-game see normally.
+    const lightsOut = this._lightsOut();
+    const dimmed = lightsOut && !iAmImpostor && !iAmDowned && !ended;
 
-    const players = [...this.players.values()].filter((p) => {
-      // Living players do NOT see ghosts (energy plane) at all — only a corpse is
-      // left behind (see corpses below). Ghosts and post-game see everyone.
-      if (!fullSight && p.plane === PLANE.ENERGY && p.id !== me.id) return false;
-      return true;
-    }).map((p) => {
+    const players = [...this.players.values()].map((p) => {
       const sameRoom = p.room === me.room;
       const base = { id: p.id, name: p.name, plane: p.plane, connected: p.connected, isBot: !!p.isBot,
         loadout: p.loadout, idColor: p.idColor };
-      // Hide everyone not in my room (unless I have full sight). Self always shown.
-      const hidespatial = !fullSight && !sameRoom && p.id !== me.id;
+      // Position: hidden for off-room players while dimmed (self always visible).
+      const hidespatial = dimmed && !sameRoom && p.id !== me.id;
       base.room = hidespatial ? null : p.room;
       base.obscured = hidespatial;
+      // Continuous world position for the real-time renderer (null when obscured).
       base.x = hidespatial ? null : (p.x ?? null);
       base.y = hidespatial ? null : (p.y ?? null);
       if (ended || iAmDowned) base.role = p.role;                          // ghosts & post-game see all
@@ -1403,11 +1232,6 @@ export class GameEngine {
       else base.role = "unknown";
       return base;
     });
-
-    // Corpses visible to the viewer: living players see bodies in their own room;
-    // ghosts/post-game see all bodies. (The ghost themselves is hidden above.)
-    const corpses = (this.corpses || []).filter((c) => fullSight || c.room === me.room)
-      .map((c) => ({ id: c.id, name: c.name, room: c.room, x: c.x, y: c.y, idColor: c.idColor }));
 
     // Comms scope: physical players hear only same-room players; downed players
     // share one map-wide energy channel. We expose the channel membership so the
@@ -1427,11 +1251,10 @@ export class GameEngine {
       now: this.now,
       map: { id: this.map.id, name: this.map.name, rooms: this.map.rooms,
         refillRooms: this.map.refillRooms, turretRooms: this.map.turretRooms,
-        repairRooms: this.map.repairRooms,
+        repairRooms: this.map.repairRooms, helmRoom: 'Helm',
         // Non-secret layout metadata the client HUD/minimap needs:
         adjacency: this.map.adjacency || null, spawnRoom: this.map.spawnRoom,
         geometry: this.map.geometry || null,
-        blockers: this._allBlockers(),
         minPlayers: this.map.minPlayers, maxPlayers: this.map.maxPlayers, hullMax: HULL.MAX },
       config: this.config, // host overrides the client needs (move speed, body/head size, low-g, visibility)
       mode: this.mode ? {
@@ -1454,47 +1277,18 @@ export class GameEngine {
       powerMax: this._eff("powerMax"),
       hull: Math.round(this.hull),
       hullMax: HULL.MAX,
-      // turret-defense attack: present only while a wave is active
-      attack: this.attack ? {
-        planesLeft: this.attack.planesLeft,
-        swarmSize: ATTACK.SWARM_SIZE,
-        source: this.attack.source,
-        secondsLeft: Math.max(0, Math.round(ATTACK.MAX_DURATION_SEC - (this.now - this.attack.startedAt))),
-      } : null,
-      // which turret (if any) you're manning, and which turrets are occupied
-      yourTurret: Object.entries(this.turretOccupants).find(([, occ]) => occ === me.id)?.[0] || null,
-      turretsOccupied: Object.keys(this.turretOccupants).filter((r) => this.turretOccupants[r]),
-      planesDowned: this.planesByPlayer[me.id] || 0,
-      // airlock / outside state
-      airlock: {
-        room: this.map.airlockRoom,
-        locked: this.airlockLocked,
-        youOutside: !!me.outside,
-        // distress calls — all living crew see who's banging for help
-        distress: [...this.airlockDistress].map((id) => ({ id, name: this.players.get(id)?.name })).filter((d) => d.name),
-      },
       journey: { distance: Math.round(this.distance), total: JOURNEY.DISTANCE },
       systems: {
         oxygenOn: this.systems.oxygenOn,
+        enginesOn: this.systems.enginesOn,
+        shieldsUp: this._shieldsUp(),       // true defensive state (engines force this false)
         oxygenOnline: this._oxygenOnline(), // refills actually working right now
-        // Helm allocation: 0 = all shields (slow/safe), 1 = all engines (fast/exposed)
-        allocation: Math.round(this.allocation * 100) / 100,
-        targetAllocation: Math.round(this.targetAllocation * 100) / 100,
-        shieldStrength: Math.round(this._shieldStrength() * 100) / 100,
-        ramping: this.allocation !== this.targetAllocation,
-        // back-compat booleans some UI still reads, derived from the slider
-        enginesOn: this.allocation > 0.5,
-        shieldsUp: this._shieldsUp(),
+        engineLevel: this.helmMomentum.target,  // Target speed (0-5)
+        engineSpeed: this.helmMomentum.current, // Actual speed (0.0 - 5.0)
       },
-      // attack warning window (10s lead) so the client can flash "rush to Helm/turrets"
-      attackWarning: this.attackWarnUntil != null
-        ? { secondsLeft: Math.max(0, Math.round(this.attackWarnUntil - this.now)), source: this.pendingAttackSource }
-        : null,
-      helm: { room: this.map.spawnRoom || "Helm" },
       commanderId: this.commanderId,
       youAreCommander: playerId === this.commanderId,
       players,
-      corpses,
       taskProgress: this.taskProgress(),
       you: {
         id: me.id, role: me.role, plane: me.plane, room: me.room,
@@ -1503,8 +1297,9 @@ export class GameEngine {
         lowOxygen: me.oxygen <= OXYGEN.PANIC_THRESHOLD,
         tasks: me.tasks,
         myVote: this.votes.get(me.id) || null,
-        // Impostor-only: seconds until they can trigger another sabotage.
+        // Impostor-only: seconds until they can trigger another sabotage or pull a cable.
         sabotageCooldown: iAmImpostor ? Math.max(0, Math.round(this.globalSabotageCdUntil - this.now)) : undefined,
+        cableCooldown: iAmImpostor ? Math.max(0, Math.round((this.cooldowns[me.id]?.cable || 0) - this.now)) : undefined,
       },
       refillOnline: !this._refillDisabled(),
       lightsOut: this._lightsOut(),
@@ -1521,6 +1316,16 @@ export class GameEngine {
         votesCast: this.votes.size,
         livingCount: this._living().length,
       } : null,
+      airlockLocked: this.airlockLocked,
+      airlockBanging: [...this.airlockBanging].map(id => ({ id, name: this.players.get(id)?.name })),
+      globalAttack: this.globalAttack ? {
+        active: true,
+        shipsLeft: this.globalAttack.shipsTotal - this.globalAttack.shipsDestroyed - this.globalAttack.shipsEscaped,
+        warning: this.now < this.globalAttack.warningUntil,
+        warningSeconds: Math.max(0, Math.round(this.globalAttack.warningUntil - this.now)),
+        difficulty: this.globalAttack.difficulty,
+      } : null,
+      helmMomentum: { target: this.helmMomentum.target, current: Math.round(this.helmMomentum.current * 10) / 10 },
       sabotages: [...this.sabotages.values()].map((s) => ({
         kind: s.kind, label: s.label,
         resolveRooms: s.resolveRooms,

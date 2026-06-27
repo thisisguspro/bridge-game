@@ -2,7 +2,6 @@ import { Router } from "express";
 import { db } from "../store/index.js";
 import { issueToken, requireAuth } from "../middleware/auth.js";
 import { config } from "../config/index.js";
-import { sanitizeName } from "../moderation.js";
 
 export const authRouter = Router();
 
@@ -16,12 +15,14 @@ authRouter.post("/google", async (req, res) => {
   let profile;
   if (usingPlaceholders) {
     // DEV STUB: trust a mock profile from the body. Never do this in production.
-    const { mockGoogleId, name, email } = req.body || {};
+    const { mockGoogleId, name, email, password } = req.body || {};
+    if (!password) return res.status(400).json({ error: "Password is required in dev mode." });
     profile = {
-      googleId: mockGoogleId || "mock-google-123",
+      googleId: mockGoogleId || `mock-${email || name}`,
       name: name || "Pilot Aoi",
-      email: email || "aoi@example.com",
+      email: email || undefined,
       avatar: (name || "A")[0].toUpperCase(),
+      password,
     };
   } else {
     // TODO when real keys land: verify req.body.idToken with google-auth-library,
@@ -30,23 +31,12 @@ authRouter.post("/google", async (req, res) => {
   }
 
   let user = await db.findUserByGoogleId(profile.googleId);
-  let nameChanged = false;
-  let newAccount = false;
-  if (!user) {
-    // First-time account creation must accept the Terms of Service. The client
-    // sends acceptedTos:true after showing the ToS screen.
-    if (!(req.body && req.body.acceptedTos)) {
-      return res.status(428).json({ error: "tos_required",
-        message: "You must accept the Terms of Service to create an account." });
+  if (user) {
+    if (user.password && user.password !== profile.password) {
+      return res.status(401).json({ error: "Invalid password for this account." });
     }
-    // PG-13 name policy: a rejected name is replaced with Child######### .
-    const sani = sanitizeName(profile.name);
-    profile.name = sani.name;
-    profile.avatar = (sani.name[0] || "C").toUpperCase();
-    nameChanged = sani.changed;
-    newAccount = true;
+  } else {
     user = await db.createUser(profile);
-    if (typeof db.setTosAccepted === "function") { try { await db.setTosAccepted(user.id, true); } catch {} }
   }
 
   // Enforce bans at login (temp bans auto-expire inside isBanned).
@@ -55,7 +45,7 @@ authRouter.post("/google", async (req, res) => {
     return res.status(403).json({ error: "This account is banned.", banUntil: ban.until || null, reason: ban.reason || null });
   }
 
-  res.json({ token: issueToken(user), user: publicUser(user), nameChanged, newAccount });
+  res.json({ token: issueToken(user), user: publicUser(user) });
 });
 
 // Current signed-in player.

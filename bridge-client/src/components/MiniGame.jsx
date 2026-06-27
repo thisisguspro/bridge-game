@@ -1,375 +1,311 @@
 import { useEffect, useRef, useState } from "react";
+import { KanjiFlash } from "./effects.jsx";
 
-// Task mini-games. The player solves the interaction and it completes immediately
-// — there's no artificial wait (the server no longer enforces a minimum time).
-// Each game calls onComplete() when solved; we then fire onSolved() right away.
+// Skill-based Task mini-games!
 export default function MiniGame({ task, energy, onSolved, onCancel }) {
   const [solvedInteraction, setSolvedInteraction] = useState(false);
-  useEffect(() => { if (solvedInteraction) { const t = setTimeout(onSolved, 450); return () => clearTimeout(t); } }, [solvedInteraction]); // eslint-disable-line
+  const [showFlash, setShowFlash] = useState(false);
+  
+  useEffect(() => { 
+    if (solvedInteraction && !showFlash) {
+      setShowFlash(true);
+      setTimeout(() => onSolved(), 1000); // Wait for kanji flash
+    } 
+  }, [solvedInteraction, showFlash]); // eslint-disable-line
 
   const accent = energy ? "var(--volt)" : "var(--gold)";
-  const Game = GAMES[task.game] || WireConnect;
+  const Game = GAMES[task.game] || PipeRouter;
 
   return (
-    <div style={overlay} onClick={(e) => { if (e.target === e.currentTarget && !solvedInteraction) onCancel(); }}>
-      <div style={{ ...panel, borderColor: solvedInteraction ? "var(--volt)" : accent }} onClick={(e) => e.stopPropagation()}>
+    <div style={overlay} onClick={(e) => { if (e.target === e.currentTarget) onCancel(); }}>
+      <div style={{ ...panel, borderColor: accent, boxShadow: `0 0 50px ${accent}44, inset 0 0 20px ${accent}22` }} onClick={(e) => e.stopPropagation()}>
+        {showFlash && <KanjiFlash text="完了" sub="TASK COMPLETE" color={accent} />}
         <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
-          <span className="kanji" style={{ fontSize: 15, color: accent }}>{energy ? "霊務" : "作業"}</span>
+          <span className="kanji" style={{ fontSize: 15, color: accent, textShadow: `0 0 10px ${accent}` }}>{energy ? "霊務" : "作業"}</span>
           <span className="impactf faint" style={{ fontSize: 10 }}>{task.room}</span>
         </div>
-        <div className="display" style={{ fontSize: 26, lineHeight: 0.9, marginBottom: 2 }}>{task.name}</div>
-        <div className="faint" style={{ fontSize: 11, marginBottom: 14 }}>{GAME_LABELS[task.game] || "Complete the task"}</div>
+        <div className="display" style={{ fontSize: 32, lineHeight: 0.9, marginBottom: 2, textShadow: "0 0 8px rgba(255,255,255,0.4)" }}>{task.name}</div>
+        <div className="faint" style={{ fontSize: 12, marginBottom: 20 }}>{GAME_LABELS[task.game] || "Complete the task"}</div>
 
-        {solvedInteraction ? (
-          <div style={{ textAlign: "center", padding: "26px 0" }}>
-            <div className="display" style={{ fontSize: 40, color: "var(--volt)", lineHeight: 1 }}>✓ COMPLETE</div>
-            <div className="kanji" style={{ fontSize: 16, color: "var(--volt)", marginTop: 4 }}>完了</div>
-          </div>
-        ) : (
-          <Game accent={accent} onComplete={() => setSolvedInteraction(true)} solved={solvedInteraction} />
-        )}
+        <Game accent={accent} onComplete={() => setTimeout(() => setSolvedInteraction(true), 350)} solved={solvedInteraction} />
 
-        {!solvedInteraction && (
-          <div style={{ marginTop: 16, display: "flex", justifyContent: "flex-end" }}>
-            <button className="btn btn-ghost" style={{ fontSize: 11, padding: "6px 12px" }} onClick={onCancel}>Cancel (Esc)</button>
+        <div style={{ marginTop: 24 }}>
+          <div className="row" style={{ justifyContent: "space-between" }}>
+            <button className="btn btn-ghost" style={{ fontSize: 11, padding: "6px 12px" }} onClick={onCancel}>Abort</button>
+            <span className="impactf" style={{ fontSize: 11, color: solvedInteraction ? accent : "var(--dim)", letterSpacing: "0.1em" }}>
+              {solvedInteraction ? "DONE" : "IN PROGRESS"}
+            </span>
           </div>
-        )}
+        </div>
+        
+        <div style={{ position: "absolute", inset: 0, pointerEvents: "none", background: "repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.2) 2px, rgba(0,0,0,0.2) 4px)", opacity: 0.5, mixBlendMode: "overlay" }} />
       </div>
     </div>
   );
 }
 
 const GAME_LABELS = {
-  wire_connect: "Drag each wire to its matching port.",
-  code_sequence: "Repeat the highlighted sequence.",
-  alignment: "Slide both rings into the green zone.",
-  hold_timing: "Hold the button while the needle is in the band.",
-  water_sort: "Pour to sort each color into its own tube.",
-  pattern_recall: "Memorize the lit cells, then tap them.",
-  flux_route: "Route the flux through every node.",
-  phase_match: "Match the phase to the target.",
+  wire_connect: "Click to rotate pipes and route the power.",
+  code_sequence: "Type the sequence rapidly using WASD.",
+  alignment: "Keep the slider in the moving sweet spot.",
+  hold_timing: "Tap repeatedly to keep the needle stabilized.",
+  flux_route: "Shoot down enemy ships before they escape!",
+  phase_match: "Keep the slider in the moving sweet spot.",
+  turret_defense: "Shoot down enemy ships before they damage the hull!",
 };
 
-/* ---------------- wire connect ---------------- */
-// Drag a wire from a left port to its color-matching right port. Connections are
-// DRAWN as curved wires so you can see what's linked; a live wire follows the
-// cursor while you're mid-connection.
-function WireConnect({ accent, onComplete }) {
-  const colors = ["#ff2d4d", "#46e6ff", "#ffc83d", "#9b6cff"];
-  const [rightOrder] = useState(() => shuffle([0, 1, 2, 3]));
-  const [picked, setPicked] = useState(null);
-  const [linked, setLinked] = useState({}); // leftIdx -> rightIdx
-  const [cursor, setCursor] = useState(null); // {x,y} within the svg while dragging
-  const boxRef = useRef(null);
-  useEffect(() => { if (Object.keys(linked).length === 4) onComplete(); }, [linked]); // eslint-disable-line
-
-  const W = 260, H = 200, padY = 26, gap = (H - padY * 2) / 3;
-  const leftX = 40, rightX = W - 40;
-  const leftY = (i) => padY + i * gap;
-  const rightY = (i) => padY + i * gap;
-
-  const link = (rightIdx) => {
-    if (picked == null) return;
-    if (rightOrder[rightIdx] === picked) setLinked((l) => ({ ...l, [picked]: rightIdx }));
-    setPicked(null); setCursor(null);
-  };
-  const onMove = (e) => {
-    if (picked == null || !boxRef.current) return;
-    const r = boxRef.current.getBoundingClientRect();
-    setCursor({ x: e.clientX - r.left, y: e.clientY - r.top });
-  };
-  const wirePath = (x1, y1, x2, y2) => {
-    const mx = (x1 + x2) / 2;
-    return `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`;
-  };
+/* ---------------- Pipe Router ---------------- */
+// A simple 3x3 grid where pipes must connect left to right
+function PipeRouter({ accent, onComplete }) {
+  // 0: straight (horizontal), 1: straight (vertical), 2: corner (L)
+  // We'll just do a simpler game: 4 pipes in a row, all must be horizontal.
+  const [pipes, setPipes] = useState(() => Array.from({ length: 4 }, () => Math.floor(Math.random() * 3) + 1));
+  
+  useEffect(() => {
+    if (pipes.every(p => p === 0)) onComplete();
+  }, [pipes]); // eslint-disable-line
 
   return (
-    <svg ref={boxRef} viewBox={`0 0 ${W} ${H}`} width={W} height={H} style={{ display: "block", margin: "0 auto" }}
-      onMouseMove={onMove} onMouseLeave={() => setCursor(null)}>
-      {/* completed connections, drawn in their color */}
-      {Object.entries(linked).map(([li, ri]) => (
-        <path key={li} d={wirePath(leftX, leftY(+li), rightX, rightY(+ri))}
-          stroke={colors[+li]} strokeWidth={4} fill="none" strokeLinecap="round" opacity={0.95} />
+    <div style={{ display: "flex", justifyContent: "center", gap: 10, padding: "20px 0", alignItems: "center" }}>
+      <div style={{ width: 10, height: 10, background: accent, borderRadius: "50%", boxShadow: `0 0 10px ${accent}` }} />
+      {pipes.map((rot, i) => (
+        <div key={i} onClick={() => setPipes(p => { const np = [...p]; np[i] = (np[i] + 1) % 4; return np; })}
+          style={{ width: 40, height: 40, background: "var(--ink-3)", border: "2px solid var(--line)", cursor: "pointer", position: "relative", transform: `rotate(${rot * 90}deg)`, transition: "transform 0.15s ease-in-out" }}>
+          <div style={{ position: "absolute", top: 17, left: 0, right: 0, height: 6, background: accent }} />
+        </div>
       ))}
-      {/* live wire from the picked port to the cursor */}
-      {picked != null && cursor && (
-        <path d={wirePath(leftX, leftY(picked), cursor.x, cursor.y)}
-          stroke={colors[picked]} strokeWidth={3} fill="none" strokeDasharray="6 5" opacity={0.8} />
-      )}
-      {/* left ports */}
-      {colors.map((c, i) => (
-        <g key={"L" + i} style={{ cursor: i in linked ? "default" : "pointer" }} onMouseDown={() => !(i in linked) && setPicked(i)}>
-          <rect x={leftX - 22} y={leftY(i) - 12} width={28} height={24} rx={4} fill={c}
-            opacity={i in linked ? 0.4 : 1} stroke={picked === i ? "#fff" : "#0d0b14"} strokeWidth={picked === i ? 3 : 2} />
-          <circle cx={leftX} cy={leftY(i)} r={5} fill="#0d0b14" />
-        </g>
-      ))}
-      {/* right ports (shuffled colors) */}
-      {rightOrder.map((c, i) => {
-        const isLinked = Object.values(linked).includes(i);
-        return (
-          <g key={"R" + i} style={{ cursor: "pointer" }} onMouseUp={() => link(i)} onMouseDown={() => link(i)}>
-            <rect x={rightX - 6} y={rightY(i) - 12} width={28} height={24} rx={4} fill={colors[c]}
-              opacity={isLinked ? 1 : 0.45} stroke="#0d0b14" strokeWidth={2} />
-            <circle cx={rightX} cy={rightY(i)} r={5} fill="#0d0b14" />
-          </g>
-        );
-      })}
-    </svg>
+      <div style={{ width: 10, height: 10, background: "var(--dim)", borderRadius: "50%" }} />
+    </div>
   );
 }
 
-/* ---------------- code sequence (Simon) ---------------- */
-function CodeSequence({ accent, onComplete }) {
-  const [seq] = useState(() => Array.from({ length: 4 }, () => Math.floor(Math.random() * 4)));
+/* ---------------- Reflex Sequence (DDR style) ---------------- */
+function ReflexSequence({ accent, onComplete }) {
+  const chars = ["W", "A", "S", "D"];
+  const [seq] = useState(() => Array.from({ length: 6 }, () => chars[Math.floor(Math.random() * chars.length)]));
   const [step, setStep] = useState(0);
-  const [flash, setFlash] = useState(-1);
-  const [showing, setShowing] = useState(true);
+
   useEffect(() => {
-    // play the sequence once
-    let i = 0; setShowing(true);
-    const iv = setInterval(() => {
-      setFlash(seq[i]); setTimeout(() => setFlash(-1), 300);
-      i++; if (i >= seq.length) { clearInterval(iv); setTimeout(() => setShowing(false), 400); }
-    }, 600);
-    return () => clearInterval(iv);
-  }, [seq]);
-  const press = (n) => {
-    if (showing) return;
-    if (seq[step] === n) {
-      const next = step + 1; setStep(next);
-      setFlash(n); setTimeout(() => setFlash(-1), 150);
-      if (next >= seq.length) onComplete();
-    } else { setStep(0); } // wrong -> restart input
-  };
-  const cells = ["#ff2d4d", "#46e6ff", "#ffc83d", "#9b6cff"];
+    const handleKey = (e) => {
+      const key = e.key.toUpperCase();
+      if (!chars.includes(key)) return;
+      if (key === seq[step]) {
+        const next = step + 1;
+        setStep(next);
+        if (next >= seq.length) onComplete();
+      } else {
+        setStep(0); // miss resets
+      }
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [step, seq, onComplete]);
+
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, width: 180, margin: "0 auto" }}>
-      {cells.map((c, i) => (
-        <button key={i} disabled={showing} onClick={() => press(i)}
-          style={{ height: 64, background: c, opacity: flash === i ? 1 : 0.35, border: "2px solid var(--ink)", transition: "opacity 0.1s", cursor: showing ? "default" : "pointer" }} />
-      ))}
-      <div className="impactf faint" style={{ gridColumn: "1 / -1", textAlign: "center", fontSize: 10 }}>
-        {showing ? "WATCH…" : `INPUT ${step}/${seq.length}`}
+    <div style={{ textAlign: "center", padding: "10px 0" }}>
+      <div style={{ display: "flex", justifyContent: "center", gap: 8, marginBottom: 12 }}>
+        {seq.map((c, i) => {
+          const done = i < step;
+          const current = i === step;
+          return (
+            <div key={i} style={{ 
+              width: 40, height: 40, display: "flex", alignItems: "center", justifyContent: "center",
+              background: done ? accent : "var(--ink)", 
+              border: `2px solid ${current ? accent : "var(--line)"}`,
+              color: done ? "#000" : current ? accent : "var(--faint)",
+              fontFamily: "var(--impact)", fontSize: 20,
+              boxShadow: current ? `0 0 15px ${accent}` : "none",
+              transform: current ? "scale(1.1)" : "scale(1)"
+            }}>
+              {c}
+            </div>
+          );
+        })}
       </div>
+      <div className="impactf faint" style={{ fontSize: 11 }}>TYPE THE SEQUENCE QUICKLY</div>
     </div>
   );
 }
 
-/* ---------------- alignment (two sliders into zone) ---------------- */
-function Alignment({ accent, onComplete }) {
-  const [a, setA] = useState(15); const [b, setB] = useState(85);
-  const inZone = (v) => v >= 45 && v <= 55;
-  useEffect(() => { if (inZone(a) && inZone(b)) onComplete(); }, [a, b]); // eslint-disable-line
-  const Slider = ({ v, set }) => (
-    <div style={{ position: "relative", height: 26, marginBottom: 14 }}>
-      <div style={{ position: "absolute", left: "45%", width: "10%", height: "100%", background: "rgba(70,230,255,0.18)", border: `1px solid ${accent}` }} />
-      <input type="range" min="0" max="100" value={v} onChange={(e) => set(Number(e.target.value))}
-        style={{ width: "100%", accentColor: inZone(v) ? accent : "var(--hot)" }} />
-    </div>
-  );
-  return <div style={{ padding: "8px 16px" }}><Slider v={a} set={setA} /><Slider v={b} set={setB} /></div>;
-}
-
-/* ---------------- hold timing ---------------- */
-function HoldTiming({ accent, onComplete }) {
-  const [pos, setPos] = useState(0);
-  const [charge, setCharge] = useState(0);
-  const dir = useRef(1); const holding = useRef(false);
-  const posRef = useRef(0); posRef.current = pos;
+/* ---------------- Target Tracking ---------------- */
+function TargetTracking({ accent, onComplete }) {
+  const [target, setTarget] = useState(50);
+  const [val, setVal] = useState(50);
+  const [progress, setProgress] = useState(0);
+  const targetRef = useRef(50);
+  targetRef.current = target;
+  
   useEffect(() => {
-    let raf; const loop = () => {
-      setPos((p) => { let n = p + dir.current * 1.6; if (n > 100) { n = 100; dir.current = -1; } if (n < 0) { n = 0; dir.current = 1; } return n; });
-      setCharge((c) => {
-        const inBand = posRef.current >= 40 && posRef.current <= 60;
-        const nc = Math.max(0, Math.min(100, c + (holding.current && inBand ? 2.2 : holding.current ? -1.5 : -0.6)));
-        if (nc >= 100) onComplete();
-        return nc;
+    let raf;
+    let t = 0;
+    const loop = () => {
+      t += 0.05;
+      // move target erratically
+      if (Math.random() < 0.02) setTarget(Math.max(10, Math.min(90, targetRef.current + (Math.random() - 0.5) * 60)));
+      else setTarget(p => p + Math.sin(t) * 1.5);
+
+      setProgress(p => {
+        const inZone = Math.abs(val - targetRef.current) < 15;
+        return Math.max(0, Math.min(100, p + (inZone ? 1.0 : -0.5)));
       });
       raf = requestAnimationFrame(loop);
     };
-    raf = requestAnimationFrame(loop); return () => cancelAnimationFrame(raf);
-  }, []); // eslint-disable-line
-  return (
-    <div style={{ padding: "4px 10px" }} onMouseDown={() => (holding.current = true)} onMouseUp={() => (holding.current = false)} onMouseLeave={() => (holding.current = false)}>
-      <div style={{ position: "relative", height: 28, background: "var(--ink)", border: "1px solid var(--line)", marginBottom: 10 }}>
-        <div style={{ position: "absolute", left: "40%", width: "20%", height: "100%", background: "rgba(255,200,61,0.18)", borderLeft: `2px solid ${accent}`, borderRight: `2px solid ${accent}` }} />
-        <div style={{ position: "absolute", left: `${pos}%`, top: 0, width: 4, height: "100%", background: "#fff", transform: "translateX(-50%)" }} />
-      </div>
-      <div style={{ height: 14, background: "var(--ink)", border: "1px solid var(--line)" }}>
-        <div style={{ height: "100%", width: `${charge}%`, background: accent, transition: "width 0.05s" }} />
-      </div>
-      <div className="impactf faint" style={{ textAlign: "center", fontSize: 10, marginTop: 6 }}>HOLD while the marker is in the band</div>
-    </div>
-  );
-}
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [val]);
 
-/* ---------------- energy: flux route (light each node) ---------------- */
-function FluxRoute({ accent, onComplete }) {
-  const [lit, setLit] = useState(new Set());
-  const nodes = 6;
-  useEffect(() => { if (lit.size === nodes) onComplete(); }, [lit]); // eslint-disable-line
-  return (
-    <div style={{ display: "flex", justifyContent: "center", gap: 10, padding: "16px 0" }}>
-      {Array.from({ length: nodes }).map((_, i) => (
-        <button key={i} onClick={() => setLit((s) => new Set(s).add(i))}
-          style={{ width: 30, height: 30, borderRadius: "50%", background: lit.has(i) ? accent : "var(--ink-3)", border: `2px solid ${accent}`, boxShadow: lit.has(i) ? `0 0 12px ${accent}` : "none", cursor: "pointer" }} />
-      ))}
-    </div>
-  );
-}
+  useEffect(() => {
+    if (progress >= 100) {
+      onComplete();
+    }
+  }, [progress, onComplete]);
 
-/* ---------------- energy: phase match ---------------- */
-function PhaseMatch({ accent, onComplete }) {
-  const [target] = useState(() => 20 + Math.floor(Math.random() * 60));
-  const [val, setVal] = useState(0);
-  useEffect(() => { if (Math.abs(val - target) <= 3) onComplete(); }, [val, target]); // eslint-disable-line
   return (
     <div style={{ padding: "10px 16px" }}>
-      <div style={{ position: "relative", height: 30, marginBottom: 8 }}>
-        <div style={{ position: "absolute", left: `${target}%`, width: 3, height: "100%", background: accent, transform: "translateX(-50%)", boxShadow: `0 0 8px ${accent}` }} />
-        <div style={{ position: "absolute", left: `${val}%`, top: 4, width: 12, height: 22, background: "#fff", transform: "translateX(-50%)" }} />
+      <div style={{ position: "relative", height: 30, marginBottom: 8, background: "var(--ink)", border: "1px solid var(--line)" }}>
+        {/* Sweet spot */}
+        <div style={{ position: "absolute", left: `${target}%`, width: "30%", height: "100%", background: "rgba(255,255,255,0.1)", transform: "translateX(-50%)", borderLeft: `2px solid ${accent}`, borderRight: `2px solid ${accent}` }} />
+        {/* Player cursor */}
+        <div style={{ position: "absolute", left: `${val}%`, top: -4, bottom: -4, width: 6, background: "#fff", transform: "translateX(-50%)" }} />
       </div>
-      <input type="range" min="0" max="100" value={val} onChange={(e) => setVal(Number(e.target.value))} style={{ width: "100%", accentColor: accent }} />
-      <div className="impactf faint" style={{ textAlign: "center", fontSize: 10, marginTop: 4 }}>Slide the marker onto the glowing line</div>
+      <input type="range" min="0" max="100" value={val} onChange={(e) => setVal(Number(e.target.value))} style={{ width: "100%", accentColor: accent, marginBottom: 12 }} />
+      <div style={{ height: 6, background: "var(--ink)", width: "100%" }}>
+        <div style={{ height: "100%", width: `${progress}%`, background: accent, transition: "width 0.1s" }} />
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- Flappy Stabilizer ---------------- */
+function FlappyStabilizer({ accent, onComplete }) {
+  const [pos, setPos] = useState(50);
+  const [progress, setProgress] = useState(0);
+  const vRef = useRef(0);
+  
+  useEffect(() => {
+    let raf;
+    const loop = () => {
+      vRef.current -= 0.15; // gravity pulls down (negative is down in our % space, wait. Let's make 0 top, 100 bottom)
+      // Actually, let's say 0 is bottom, 100 is top.
+      setPos(p => {
+        let next = p + vRef.current;
+        if (next < 0) { next = 0; vRef.current = 0; }
+        if (next > 100) { next = 100; vRef.current = 0; }
+        return next;
+      });
+      
+      setProgress(p => {
+        const inBand = posRef.current >= 40 && posRef.current <= 60;
+        return Math.max(0, Math.min(100, p + (inBand ? 0.6 : -0.8)));
+      });
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
+  useEffect(() => {
+    if (progress >= 100) {
+      onComplete();
+    }
+  }, [progress, onComplete]);
+
+  const posRef = useRef(50); posRef.current = pos;
+  
+  const tap = () => { vRef.current = 2.5; }; // Jump
+
+  return (
+    <div style={{ padding: "4px 10px" }} onMouseDown={tap}>
+      <div style={{ position: "relative", height: 80, background: "var(--ink)", border: "1px solid var(--line)", marginBottom: 10, cursor: "pointer" }}>
+        {/* Safe band */}
+        <div style={{ position: "absolute", bottom: "40%", height: "20%", width: "100%", background: `${accent}33`, borderTop: `1px solid ${accent}`, borderBottom: `1px solid ${accent}` }} />
+        {/* Needle */}
+        <div style={{ position: "absolute", bottom: `${pos}%`, width: "100%", height: 4, background: "#fff", transform: "translateY(50%)" }} />
+      </div>
+      <div style={{ height: 10, background: "var(--ink)", border: "1px solid var(--line)" }}>
+        <div style={{ height: "100%", width: `${progress}%`, background: accent, transition: "width 0.1s" }} />
+      </div>
+      <div className="impactf faint" style={{ textAlign: "center", fontSize: 10, marginTop: 6 }}>CLICK RAPIDLY TO STABILIZE</div>
+    </div>
+  );
+}
+
+/* ---------------- Turret Shooter ---------------- */
+function TurretShooter({ accent, onComplete }) {
+  const [ships, setShips] = useState([]);
+  const [score, setScore] = useState(0);
+  const [explosions, setExplosions] = useState([]);
+  const idRef = useRef(0);
+
+  // Spawn ships at random positions
+  useEffect(() => {
+    const spawn = setInterval(() => {
+      const id = idRef.current++;
+      const x = Math.random() * 80 + 10; // 10-90%
+      const y = Math.random() * 60 + 10; // 10-70%
+      const duration = 1500 + Math.random() * 1000; // 1.5-2.5s visible
+      setShips(prev => [...prev, { id, x, y, spawnedAt: Date.now(), duration }]);
+      // Auto-remove after duration
+      setTimeout(() => setShips(prev => prev.filter(s => s.id !== id)), duration);
+    }, 800);
+    return () => clearInterval(spawn);
+  }, []);
+
+  useEffect(() => { if (score >= 5) onComplete(); }, [score, onComplete]);
+
+  const shoot = (ship, e) => {
+    e.stopPropagation();
+    setScore(s => s + 1);
+    setShips(prev => prev.filter(s => s.id !== ship.id));
+    // explosion effect
+    const ex = { id: ship.id, x: ship.x, y: ship.y };
+    setExplosions(prev => [...prev, ex]);
+    setTimeout(() => setExplosions(prev => prev.filter(e => e.id !== ex.id)), 500);
+  };
+
+  return (
+    <div style={{ position: 'relative', width: '100%', height: 200, background: 'radial-gradient(ellipse at 50% 50%, #0a0818 0%, #020108 100%)', border: '2px solid var(--line)', overflow: 'hidden', cursor: 'crosshair' }}>
+      {/* Stars background */}
+      {Array.from({length: 30}, (_, i) => (
+        <div key={`star${i}`} style={{ position: 'absolute', left: `${(i * 37) % 100}%`, top: `${(i * 53) % 100}%`, width: 2, height: 2, background: '#fff', borderRadius: '50%', opacity: 0.3 + (i % 5) * 0.1 }} />
+      ))}
+      {/* Crosshair overlay */}
+      <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', background: 'linear-gradient(transparent 49%, rgba(255,0,85,0.15) 49%, rgba(255,0,85,0.15) 51%, transparent 51%), linear-gradient(90deg, transparent 49%, rgba(255,0,85,0.15) 49%, rgba(255,0,85,0.15) 51%, transparent 51%)' }} />
+      {/* Enemy ships */}
+      {ships.map(ship => (
+        <div key={ship.id} onClick={(e) => shoot(ship, e)}
+          style={{ position: 'absolute', left: `${ship.x}%`, top: `${ship.y}%`, transform: 'translate(-50%,-50%)', cursor: 'crosshair', zIndex: 10, animation: 'shipFloat 0.5s ease-in-out infinite alternate' }}>
+          <svg width="28" height="20" viewBox="0 0 28 20">
+            <path d="M14 2 L26 10 L22 12 L14 18 L6 12 L2 10 Z" fill="none" stroke={accent} strokeWidth="2" />
+            <path d="M14 6 L20 10 L14 14 L8 10 Z" fill={accent} opacity="0.6" />
+          </svg>
+        </div>
+      ))}
+      {/* Explosions */}
+      {explosions.map(ex => (
+        <div key={`ex${ex.id}`} style={{ position: 'absolute', left: `${ex.x}%`, top: `${ex.y}%`, transform: 'translate(-50%,-50%)', width: 40, height: 40, borderRadius: '50%', background: `radial-gradient(${accent}, transparent)`, animation: 'explode 0.5s forwards', pointerEvents: 'none', zIndex: 20 }} />
+      ))}
+      {/* Score */}
+      <div style={{ position: 'absolute', bottom: 8, right: 12, fontFamily: 'var(--impact)', fontSize: 14, color: accent, letterSpacing: '0.1em' }}>{score}/5 TARGETS HIT</div>
+      {/* HUD frame */}
+      <div style={{ position: 'absolute', inset: 4, border: `1px solid ${accent}33`, pointerEvents: 'none' }} />
+      <style>{`
+        @keyframes shipFloat { 0% { transform: translate(-50%,-50%) translateY(-3px); } 100% { transform: translate(-50%,-50%) translateY(3px); } }
+        @keyframes explode { 0% { transform: translate(-50%,-50%) scale(0.5); opacity: 1; } 100% { transform: translate(-50%,-50%) scale(2); opacity: 0; } }
+      `}</style>
     </div>
   );
 }
 
 const GAMES = {
-  wire_connect: WireConnect, code_sequence: CodeSequence, alignment: Alignment,
-  hold_timing: HoldTiming, flux_route: FluxRoute, phase_match: PhaseMatch,
-  water_sort: WaterSort, pattern_recall: PatternRecall,
+  wire_connect: PipeRouter, 
+  code_sequence: ReflexSequence, 
+  alignment: TargetTracking,
+  hold_timing: FlappyStabilizer, 
+  flux_route: TurretShooter, 
+  phase_match: TargetTracking,
+  turret_defense: TurretShooter,
 };
 
-/* ---------------- pattern recall (memory) ---------------- */
-// A 4x4 grid lights up a handful of cells for a moment; memorize them, then tap
-// the cells that lit up. Get them all (and no wrong taps) to solve. Forgiving:
-// a wrong tap just resets the round and re-shows the pattern.
-function PatternRecall({ accent, onComplete, solved }) {
-  const SIZE = 16, LIT = 5;
-  const pick = () => { const s = new Set(); while (s.size < LIT) s.add(Math.floor(Math.random() * SIZE)); return s; };
-  const [target, setTarget] = useState(pick);
-  const [showing, setShowing] = useState(true);
-  const [tapped, setTapped] = useState(new Set());
-  const [wrong, setWrong] = useState(null);
-
-  useEffect(() => {
-    setShowing(true);
-    const t = setTimeout(() => setShowing(false), 1600); // memorize window
-    return () => clearTimeout(t);
-  }, [target]);
-
-  useEffect(() => {
-    if (!solved && tapped.size === target.size && [...tapped].every((i) => target.has(i))) onComplete();
-  }, [tapped]); // eslint-disable-line
-
-  const tap = (i) => {
-    if (showing || solved) return;
-    if (!target.has(i)) {
-      // wrong: flash, reset this round, re-show a (new) pattern
-      setWrong(i);
-      setTimeout(() => { setWrong(null); setTapped(new Set()); setTarget(pick()); }, 500);
-      return;
-    }
-    setTapped((s) => new Set(s).add(i));
-  };
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
-      <div className="impactf" style={{ fontSize: 11, color: accent, minHeight: 14 }}>
-        {showing ? "MEMORIZE…" : "TAP THE CELLS THAT LIT UP"}
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 48px)", gap: 6 }}>
-        {Array.from({ length: SIZE }).map((_, i) => {
-          const lit = showing && target.has(i);
-          const got = tapped.has(i);
-          const bad = wrong === i;
-          return (
-            <button key={i} onClick={() => tap(i)} disabled={showing}
-              style={{ width: 48, height: 48, borderRadius: 8, cursor: showing ? "default" : "pointer",
-                background: bad ? "var(--hot)" : lit ? accent : got ? "rgba(124,255,107,0.5)" : "rgba(20,18,30,0.9)",
-                border: `2px solid ${lit || got ? accent : "var(--line)"}`, transition: "background 0.12s" }} />
-          );
-        })}
-      </div>
-      <div className="faint" style={{ fontSize: 10 }}>{tapped.size}/{target.size} found</div>
-    </div>
-  );
-}
-
-/* ---------------- water sort (pour to separate colors) ---------------- */
-// Classic tube-sort: tap a tube to pick it up, tap another to pour. You can pour
-// the top color block onto a matching top color (or an empty tube) if there's
-// room. Solved when every tube is empty or a single solid color. Forgiving:
-// includes a Reset if you get stuck. No timer pressure — completes on solve.
-function WaterSort({ accent, onComplete, solved }) {
-  const PALETTE = ["#ff4d6d", "#46e6ff", "#ffc83d", "#7CFF6B"];
-  const CAP = 4; // segments per tube
-  // build a solved state then scramble by legal-ish shuffling of segments
-  const makePuzzle = () => {
-    // 4 colors x4 segments, plus 2 empty tubes
-    let segs = [];
-    PALETTE.forEach((c) => { for (let i = 0; i < CAP; i++) segs.push(c); });
-    // shuffle all segments
-    for (let i = segs.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [segs[i], segs[j]] = [segs[j], segs[i]]; }
-    const tubes = [];
-    for (let t = 0; t < PALETTE.length; t++) tubes.push(segs.slice(t * CAP, t * CAP + CAP));
-    tubes.push([]); tubes.push([]); // two empty work tubes
-    return tubes;
-  };
-  const [tubes, setTubes] = useState(makePuzzle);
-  const [picked, setPicked] = useState(null);
-
-  const isSolved = (state) => state.every((t) => t.length === 0 || (t.length === CAP && t.every((c) => c === t[0])));
-  useEffect(() => { if (!solved && isSolved(tubes)) onComplete(); }, [tubes]); // eslint-disable-line
-
-  const topColor = (t) => (t.length ? t[t.length - 1] : null);
-  const topRun = (t) => { // how many of the same color are on top
-    if (!t.length) return 0; const c = t[t.length - 1]; let n = 0;
-    for (let i = t.length - 1; i >= 0 && t[i] === c; i--) n++; return n;
-  };
-
-  const tap = (idx) => {
-    if (picked == null) { if (tubes[idx].length) setPicked(idx); return; }
-    if (picked === idx) { setPicked(null); return; }
-    // attempt pour picked -> idx
-    const from = tubes[picked], to = tubes[idx];
-    const c = topColor(from);
-    const room = CAP - to.length;
-    if (c && room > 0 && (to.length === 0 || topColor(to) === c)) {
-      const move = Math.min(topRun(from), room);
-      const next = tubes.map((t) => [...t]);
-      for (let i = 0; i < move; i++) { next[idx].push(next[picked].pop()); }
-      setTubes(next);
-    }
-    setPicked(null);
-  };
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
-      <div style={{ display: "flex", gap: 12, justifyContent: "center", padding: "4px 0" }}>
-        {tubes.map((t, i) => (
-          <button key={i} onClick={() => tap(i)}
-            style={{ width: 34, height: CAP * 22 + 8, padding: 3, display: "flex", flexDirection: "column-reverse",
-              background: "rgba(255,255,255,0.04)", border: `2px solid ${picked === i ? accent : "var(--line)"}`,
-              borderTop: "none", borderRadius: "0 0 16px 16px", cursor: "pointer",
-              transform: picked === i ? "translateY(-6px)" : "none", transition: "transform 0.12s" }}>
-            {t.map((c, j) => (
-              <div key={j} style={{ height: 22, background: c, borderRadius: j === t.length - 1 ? "3px 3px 0 0" : 0, margin: "1px 0" }} />
-            ))}
-          </button>
-        ))}
-      </div>
-      <div className="row gap-s">
-        <button className="btn btn-ghost" style={{ fontSize: 10, padding: "4px 10px" }} onClick={() => { setTubes(makePuzzle()); setPicked(null); }}>Reset</button>
-        <span className="impactf faint" style={{ fontSize: 10, alignSelf: "center" }}>Pour matching colors together until each tube is one color</span>
-      </div>
-    </div>
-  );
-}
-
-function shuffle(a) { const r = [...a]; for (let i = r.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [r[i], r[j]] = [r[j], r[i]]; } return r; }
-
-const overlay = { position: "fixed", inset: 0, zIndex: 320, display: "grid", placeItems: "center", background: "rgba(5,4,9,0.6)" };
-const panel = { width: 360, maxWidth: "92vw", background: "rgba(13,11,20,0.97)", border: "2px solid var(--gold)", padding: "18px 20px", clipPath: "polygon(0 0,calc(100% - 16px) 0,100% 16px,100% 100%,16px 100%,0 calc(100% - 16px))" };
+const overlay = { position: "fixed", inset: 0, zIndex: 320, display: "grid", placeItems: "center", background: "rgba(5,4,9,0.8)", backdropFilter: "blur(4px)" };
+const panel = { position: "relative", width: 400, maxWidth: "92vw", background: "rgba(13,11,20,0.9)", border: "2px solid var(--gold)", padding: "24px", clipPath: "polygon(0 0,calc(100% - 24px) 0,100% 24px,100% 100%,24px 100%,0 calc(100% - 24px))" };

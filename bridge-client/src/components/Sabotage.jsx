@@ -67,7 +67,7 @@ export function SabotageAlerts({ view, roomId, conn }) {
 
   if (!sabs.length) return null;
   return (
-    <div style={{ position: "absolute", top: 70, left: "50%", transform: "translateX(-50%)", display: "flex", flexDirection: "column", gap: 8, zIndex: 50, width: 360, maxWidth: "80%" }}>
+    <div style={{ position: "absolute", bottom: 85, left: "50%", transform: "translateX(-50%)", display: "flex", flexDirection: "column", gap: 8, zIndex: 50, width: 360, maxWidth: "80%" }}>
       {sabs.map((s) => {
         const meta = SAB[s.kind] || { label: s.kind, emoji: "⚠️" };
         const fuse = s.expiresAt ? Math.max(0, Math.round(s.expiresAt - (view.now ?? 0))) : null;

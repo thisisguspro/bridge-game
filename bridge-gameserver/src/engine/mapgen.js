@@ -1,21 +1,17 @@
 // ============================================================
-// MODULAR MAP GENERATOR (v0.1)
-// Instead of hand-authored fixed maps, we assemble a map from a ROOM LIBRARY
-// scaled to the player count, then connect the rooms into a graph that obeys
-// LAYOUT RULES so the result is strategically sound (not just technically
-// playable). A "named map" is simply a frozen generator output (a seed + size),
-// so fixed maps and procedural maps share one code path.
+// MODULAR MAP GENERATOR (v0.2 — DONUT LAYOUT)
+// The ship is a circular ring of corridor segments forming a continuous hallway.
+// Fixed rooms (Helm, Reactor, Airlock/Space) occupy known positions on the ring.
+// Functional rooms branch off the ring on either side, each connecting at 2
+// points so there are always 2 ways in/out. Turrets sit on the outer perimeter.
 //
 // Layout rules enforced:
-//   - Guaranteed connectivity: every room reachable (spanning tree first).
-//   - No single-exit task rooms: every non-spawn room gets >=2 connections, so
-//     no room is a one-way death trap (a hiding saboteur can always be fled).
-//   - Spine + branches: a central corridor of "hub" rooms with functional rooms
-//     branching off — produces chokepoints instead of a uniform mesh.
-//   - Distance constraints: refill rooms are spread out (not clustered), so air
-//     pressure is felt; turrets sit toward the perimeter.
-//   - Scaling: room count, turrets, and refills scale with players so an 18-
-//     player station sprawls while an 8-player one stays tense.
+//   - Guaranteed connectivity: every room reachable (ring is a cycle).
+//   - No single-exit rooms: branching rooms connect at 2 ring nodes.
+//   - Donut topology: a central corridor ring with branches — creates natural
+//     chokepoints and patrol loops.
+//   - Distance constraints: refill rooms spread out; turrets on perimeter.
+//   - Scaling: room count, turrets, and refills scale with player count.
 // ============================================================
 
 import { makeRng } from "./rng.js";
@@ -24,11 +20,11 @@ import { makeRng } from "./rng.js";
 // `kind`: hub (corridor/connective), function (tasks + a system role), utility.
 // `roles`: which special functions this room can serve (refill/turret/repair).
 const ROOM_LIBRARY = [
-  { type: "Bridge",       kind: "hub",      roles: [],                     weight: 0, fixed: true },
+  { type: "Helm",         kind: "hub",      roles: [],                     weight: 0, fixed: true },
   { type: "Corridor",     kind: "hub",      roles: [],                     weight: 3 },
   { type: "Junction",     kind: "hub",      roles: [],                     weight: 2 },
   { type: "Engineering",  kind: "function", roles: ["refill", "repair"],   weight: 2 },
-  { type: "Reactor",      kind: "function", roles: ["repair"],             weight: 2 },
+  { type: "Reactor",      kind: "function", roles: ["repair"],             weight: 2, fixed: true },
   { type: "Sensors",      kind: "function", roles: [],                     weight: 2 },
   { type: "Medbay",       kind: "function", roles: ["refill"],             weight: 2 },
   { type: "Cargo",        kind: "function", roles: ["repair"],             weight: 1 },
@@ -37,28 +33,34 @@ const ROOM_LIBRARY = [
   { type: "Labs",         kind: "function", roles: [],                     weight: 1 },
   { type: "Galley",       kind: "function", roles: ["refill"],             weight: 1 },
   { type: "Storage",      kind: "function", roles: [],                     weight: 1 },
+  { type: "Airlock",      kind: "function", roles: [],                     weight: 0, fixed: true },
+  { type: "Space",        kind: "function", roles: [],                     weight: 0, fixed: true },
 ];
 
 // Scale targets by player count. Returns the shape of the map to build.
 function sizeFor(players) {
-  // Rooms grow ~ with players; turrets >= 2 and >= 2x impostors; refills ~ rooms/3.
   const impostors = players <= 10 ? 1 : 2;
-  const functional = Math.max(4, Math.round(players * 0.8));      // task rooms
-  const hubs = Math.max(2, Math.round(functional / 3));            // connective rooms
-  const turrets = Math.max(2, impostors * 2);                      // boarding defense
-  const refills = Math.max(2, Math.round(functional / 3));         // O2 stations
-  const repairs = Math.max(2, Math.round(functional / 4));         // hull repair points
-  return { players, impostors, functional, hubs, turrets, refills, repairs };
+  const crew = players - impostors;
+  const totalRandomRooms = (impostors + 1) + Math.floor(crew / 2);
+  
+  // At least 2 turrets, or 2x impostor count
+  const turrets = Math.max(2, impostors * 2);
+  // The rest of the random rooms are functional task rooms
+  const functional = Math.max(0, totalRandomRooms - turrets);
+
+  const refills = Math.max(1, Math.round(functional / 3));
+  const repairs = Math.max(1, Math.round(functional / 4));
+  return { players, impostors, functional, turrets, refills, repairs };
 }
 
 // Pick N function-room types by weight without repeating until the library is
 // exhausted (then it allows repeats with a numeric suffix for variety).
+// Excludes fixed rooms (Reactor, Airlock, Space) since they're placed separately.
 function pickFunctionRooms(rng, n) {
-  const pool = ROOM_LIBRARY.filter((r) => r.kind === "function");
+  const pool = ROOM_LIBRARY.filter((r) => r.kind === "function" && !r.fixed);
   const chosen = [];
   const counts = {};
   for (let i = 0; i < n; i++) {
-    // weighted pick
     const total = pool.reduce((a, r) => a + r.weight, 0);
     let roll = rng() * total, pick = pool[0];
     for (const r of pool) { roll -= r.weight; if (roll <= 0) { pick = r; break; } }
@@ -69,50 +71,68 @@ function pickFunctionRooms(rng, n) {
   return chosen;
 }
 
-// Build the connection graph: a spine of hubs, function rooms branch off hubs,
-// then add a few cross-links so it isn't a pure tree (creates loops/escape).
-function buildGraph(rng, spawn, hubs, functions, turrets) {
+// Build the donut-shaped connection graph:
+// 1) Place N corridor nodes in a ring (sequential loop: 1->2->...->N->1).
+// 2) Place Helm at the top (node 0) and Reactor at the bottom (node N/2).
+// 3) Place Airlock on the ring; Space connects only to Airlock.
+// 4) Branch functional rooms off the ring, each connecting to 2 adjacent nodes.
+// 5) Turrets hang off the outer perimeter.
+function buildGraph(rng, size, functions, turretNames) {
   const adj = {};
   const link = (a, b) => { (adj[a] ||= new Set()).add(b); (adj[b] ||= new Set()).add(a); };
-  const allRooms = [spawn, ...hubs, ...functions.map((f) => f.name), ...turrets];
-  for (const r of allRooms) adj[r] ||= new Set();
 
-  // 1) Spine: spawn -> hub -> hub -> ... (a central corridor).
-  const spine = [spawn, ...hubs];
-  for (let i = 0; i < spine.length - 1; i++) link(spine[i], spine[i + 1]);
+  const spawn = "Helm";
+  const reactor = "Reactor";
 
-  // 2) Branch each function room off a random spine node.
-  for (const f of functions) link(f.name, spine[Math.floor(rng() * spine.length)]);
-
-  // 3) Turrets sit at the perimeter — hang them off function rooms or spine ends.
-  for (const t of turrets) {
-    const anchorPool = functions.length ? functions.map((f) => f.name) : spine;
-    link(t, anchorPool[Math.floor(rng() * anchorPool.length)]);
+  // Combine functional rooms, turrets, and Airlock
+  const pathRooms = [...functions.map((f) => f.name), ...turretNames, "Airlock"];
+  
+  // Shuffle them using rng
+  for (let i = pathRooms.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [pathRooms[i], pathRooms[j]] = [pathRooms[j], pathRooms[i]];
   }
 
-  // 4) Cross-links: add a few extra edges so there are loops (no dead-end traps,
-  //    and saboteurs have escape routes). ~ one per 4 rooms.
-  const extra = Math.max(1, Math.round(allRooms.length / 4));
-  for (let i = 0; i < extra; i++) {
-    const a = allRooms[Math.floor(rng() * allRooms.length)];
-    const b = allRooms[Math.floor(rng() * allRooms.length)];
-    if (a !== b) link(a, b);
-  }
+  // Split path rooms into top and bottom chains
+  const topPath = [];
+  const bottomPath = [];
+  pathRooms.forEach((r, i) => {
+    if (i % 2 === 0) topPath.push(r);
+    else bottomPath.push(r);
+  });
 
-  // 5) Enforce "no single-exit room" (except we allow spawn to be low-degree):
-  //    any room with <2 links gets connected to a random hub.
-  for (const r of allRooms) {
-    if (r === spawn) continue;
-    while (adj[r].size < 2) {
-      const h = spine[Math.floor(rng() * spine.length)];
-      if (h !== r) link(r, h); else break;
+  // Initialize adjacency maps
+  const allRooms = [spawn, reactor, "Space", ...pathRooms];
+  for (const r of allRooms) adj[r] = new Set();
+
+  if (topPath.length > 0) {
+    link(reactor, topPath[0]);
+    for (let i = 0; i < topPath.length - 1; i++) {
+      link(topPath[i], topPath[i + 1]);
     }
+    link(topPath[topPath.length - 1], spawn);
+  } else {
+    link(reactor, spawn);
   }
 
-  // Convert sets to arrays.
+  if (bottomPath.length > 0) {
+    link(reactor, bottomPath[0]);
+    for (let i = 0; i < bottomPath.length - 1; i++) {
+      link(bottomPath[i], bottomPath[i + 1]);
+    }
+    link(bottomPath[bottomPath.length - 1], spawn);
+  } else {
+    link(reactor, spawn);
+  }
+
+  // Space connects only to Airlock
+  link("Airlock", "Space");
+
+  // Convert sets to arrays
   const out = {};
-  for (const r of allRooms) out[r] = [...adj[r]];
-  return { adjacency: out, rooms: allRooms };
+  for (const r of allRooms) out[r] = [...(adj[r] || [])];
+  
+  return { adjacency: out, rooms: allRooms, topPath, bottomPath };
 }
 
 // Verify every room is reachable from spawn (connectivity guarantee).
@@ -127,15 +147,13 @@ export function generateMap({ players = 8, seed = null, id = null, name = null }
   const rng = makeRng(seed ?? Math.floor(Math.random() * 1e9));
   const size = sizeFor(players);
 
-  const spawn = "Bridge";
-  const hubs = [];
-  for (let i = 0; i < size.hubs; i++) hubs.push(i === 0 ? "Central Corridor" : `Corridor ${i + 1}`);
+  const spawn = "Helm";
   const functions = pickFunctionRooms(rng, size.functional);
-  const turrets = [];
   const turretNames = ["Turret Alpha", "Turret Beta", "Turret Gamma", "Turret Delta", "Turret Epsilon", "Turret Zeta"];
+  const turrets = [];
   for (let i = 0; i < size.turrets; i++) turrets.push(turretNames[i] || `Turret ${i + 1}`);
 
-  let graph = buildGraph(rng, spawn, hubs, functions, turrets);
+  let graph = buildGraph(rng, size, functions, turrets);
   // Connectivity safety net: if somehow disconnected, chain everything to spawn.
   if (!isConnected(graph.adjacency, spawn, graph.rooms)) {
     for (const r of graph.rooms) if (r !== spawn && !graph.adjacency[r].includes(spawn)) {
@@ -147,10 +165,8 @@ export function generateMap({ players = 8, seed = null, id = null, name = null }
   const fnRooms = functions.slice();
   const byRole = (role) => fnRooms.filter((f) => f.roles.includes(role)).map((f) => f.name);
   const spread = (candidates, count) => {
-    // pick `count` spaced-out entries
     const picks = []; const step = Math.max(1, Math.floor(candidates.length / count));
     for (let i = 0; i < candidates.length && picks.length < count; i += step) picks.push(candidates[i]);
-    // top up if short
     for (const c of candidates) if (picks.length < count && !picks.includes(c)) picks.push(c);
     return picks;
   };
@@ -160,10 +176,7 @@ export function generateMap({ players = 8, seed = null, id = null, name = null }
   while (refillRooms.length < 2 && functions[refillRooms.length]) refillRooms.push(functions[refillRooms.length].name);
   while (repairRooms.length < 2 && functions[repairRooms.length]) repairRooms.push(functions[repairRooms.length].name);
 
-  // ---- spatial layout: give every room an x/y center + size so the client can
-  // render an isometric playfield and the engine can track continuous positions.
-  // Uses the same BFS-depth radial arrangement the minimap draws, scaled into a
-  // world grid. Rooms are axis-aligned rectangles; adjacency becomes corridors.
+  // ---- spatial layout: dual-path geometry ----
   const geometry = buildGeometry(graph.rooms, graph.adjacency, spawn);
 
   return {
@@ -187,47 +200,119 @@ export function generateMap({ players = 8, seed = null, id = null, name = null }
   };
 }
 
-// Build axis-aligned room rectangles from the adjacency graph. Deterministic:
-// BFS-depth rings around the spawn, each room a fixed-size cell on that ring,
-// positions quantized to a grid so rooms don't overlap. World units are abstract
-// (the client scales them to pixels). Each room is ROOM_SIZE square.
-const ROOM_SIZE = 120;       // world units per room box
-const RING_GAP = 230;        // distance between depth rings
-function buildGeometry(rooms, adjacency, spawn) {
-  const center = { x: 0, y: 0 };
-  const depth = { [spawn]: 0 }; const q = [spawn]; const byDepth = { 0: [spawn] };
-  while (q.length) {
-    const cur = q.shift();
-    for (const n of (adjacency?.[cur] || [])) if (depth[n] === undefined) {
-      depth[n] = depth[cur] + 1; (byDepth[depth[n]] ||= []).push(n); q.push(n);
+// Build geometry: places rooms cleanly in two horizontal paths between Reactor (left) and Helm (right)
+const ROOM_SIZE = 1200;       // world units per room box
+const CENTER = { x: 8000, y: 8000 };
+const H_STEP = 1800;          // horizontal spacing between room centers (was 2400)
+const V_OFFSET = 1200;        // vertical offset of paths from center line (was 1800)
+
+export function buildGeometry(rooms, adjacency, spawn) {
+  const reactor = "Reactor";
+  const helm = "Helm";
+
+  // Trace the paths from Reactor to Helm
+  const reactorNeighbors = (adjacency[reactor] || []);
+  const paths = [];
+  const visited = new Set([reactor, helm, "Space"]);
+
+  for (const startRoom of reactorNeighbors) {
+    if (visited.has(startRoom)) continue;
+    const path = [];
+    let curr = startRoom;
+    while (curr && !visited.has(curr)) {
+      path.push(curr);
+      visited.add(curr);
+      const neighbors = (adjacency[curr] || []).filter(n => !visited.has(n));
+      curr = neighbors[0] || null;
     }
+    paths.push(path);
   }
-  for (const r of rooms) if (depth[r] === undefined) { depth[r] = (Math.max(0, ...Object.values(depth)) + 1); (byDepth[depth[r]] ||= []).push(r); }
+
+  const topPath = paths[0] || [];
+  const bottomPath = paths[1] || [];
+  const numCols = Math.max(topPath.length, bottomPath.length);
 
   const placed = {};
-  for (const [d, list] of Object.entries(byDepth)) {
-    const ring = Number(d); const radius = ring * RING_GAP;
-    list.forEach((r, i) => {
-      if (ring === 0) { placed[r] = { x: center.x, y: center.y }; return; }
-      const a = (i / list.length) * Math.PI * 2 + ring * 0.7;
-      placed[r] = { x: Math.round(center.x + radius * Math.cos(a)), y: Math.round(center.y + radius * Math.sin(a)) };
-    });
+
+  // Place Reactor at the far left
+  placed[reactor] = {
+    x: Math.round(CENTER.x - (numCols / 2 + 1.0) * H_STEP),
+    y: CENTER.y,
+  };
+
+  // Place Helm at the far right
+  placed[helm] = {
+    x: Math.round(CENTER.x + (numCols / 2 + 1.0) * H_STEP),
+    y: CENTER.y,
+  };
+
+  // Place topPath rooms horizontally
+  topPath.forEach((r, i) => {
+    const colOffset = (numCols - topPath.length) / 2;
+    placed[r] = {
+      x: Math.round(CENTER.x - (numCols / 2 - (i + colOffset) - 0.5) * H_STEP),
+      y: CENTER.y - V_OFFSET,
+    };
+  });
+
+  // Place bottomPath rooms horizontally
+  bottomPath.forEach((r, i) => {
+    const colOffset = (numCols - bottomPath.length) / 2;
+    placed[r] = {
+      x: Math.round(CENTER.x - (numCols / 2 - (i + colOffset) - 0.5) * H_STEP),
+      y: CENTER.y + V_OFFSET,
+    };
+  });
+
+  // Place Space directly touching Airlock (no gap/corridor)
+  if (rooms.includes("Space")) {
+    const airlockPos = placed["Airlock"];
+    if (airlockPos) {
+      const isTop = topPath.includes("Airlock");
+      placed["Space"] = {
+        x: airlockPos.x - 600,
+        y: isTop ? airlockPos.y - 2400 : airlockPos.y + 1200,
+      };
+    } else {
+      placed["Space"] = { x: CENTER.x - 600, y: CENTER.y - 2400 };
+    }
   }
-  // normalize so all coords are positive, with a margin
-  const xs = Object.values(placed).map((p) => p.x), ys = Object.values(placed).map((p) => p.y);
-  const minX = Math.min(...xs), minY = Math.min(...ys), maxX = Math.max(...xs), maxY = Math.max(...ys);
+
+  // Guarantee placement for any stray rooms
+  for (const r of rooms) {
+    if (!placed[r]) {
+      placed[r] = { x: CENTER.x, y: CENTER.y };
+    }
+  }
+
+  // --- Normalize coordinates ---
+  const xs = Object.values(placed).map((p) => p.x);
+  const ys = Object.values(placed).map((p) => p.y);
+  const minX = Math.min(...xs), minY = Math.min(...ys);
+  const maxX = Math.max(...xs), maxY = Math.max(...ys);
   const margin = ROOM_SIZE;
+
   const roomRects = {};
   for (const r of rooms) {
-    roomRects[r] = { x: placed[r].x - minX + margin, y: placed[r].y - minY + margin, w: ROOM_SIZE, h: ROOM_SIZE };
+    const p = placed[r];
+    const rSize = r === "Space" ? 2400 : ROOM_SIZE;
+    roomRects[r] = {
+      x: p.x - minX + margin,
+      y: p.y - minY + margin,
+      w: rSize,
+      h: rSize,
+    };
   }
+
   const worldW = (maxX - minX) + margin * 2 + ROOM_SIZE;
   const worldH = (maxY - minY) + margin * 2 + ROOM_SIZE;
-  // corridors = unique adjacency pairs (the client draws connecting halls)
+
+  // Corridors = unique adjacency pairs
   const seen = new Set(), corridors = [];
   for (const a of rooms) for (const b of (adjacency?.[a] || [])) {
     const key = [a, b].sort().join("|"); if (seen.has(key)) continue; seen.add(key); corridors.push([a, b]);
   }
+
   return { worldW, worldH, rooms: roomRects, corridors };
 }
 
@@ -237,4 +322,4 @@ export function frozenMap(id, name, players, seed) {
   return { ...generateMap({ players, seed, id, name }), procedural: false };
 }
 
-export { ROOM_LIBRARY, sizeFor, buildGeometry };
+export { ROOM_LIBRARY, sizeFor };

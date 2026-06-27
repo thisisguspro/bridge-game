@@ -122,7 +122,7 @@ export class RoomManager {
     for (const room of this.rooms.values()) {
       if (room.isOpenForRandom() && (!preferredMapId || room.engine.map.id === preferredMapId)) return room;
     }
-    return this.create({ isPublic: true, mapId: preferredMapId || "nebula_drift" });
+    return this.create({ isPublic: true, mapId: preferredMapId || "procedural" });
   }
 
   destroy(id) {

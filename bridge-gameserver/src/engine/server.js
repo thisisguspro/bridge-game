@@ -197,6 +197,14 @@ io.on("connection", (socket) => {
   socket.on("voice_command", ({ roomId, command, targetId }) => act(roomId, (r, pid) => r.engine.sendVoiceCommand(pid, command, targetId ?? null)));
   socket.on("speech", ({ roomId, text }) => act(roomId, (r, pid) => r.engine.sendSpeech(pid, text ?? null)));
 
+  // ---- new: spacewalk / turret / helm / task pass-throughs ----
+  socket.on("set_destination", ({ roomId, x, y }) => act(roomId, (r, pid) => r.engine.setDestination(pid, x, y)));
+  socket.on("set_engine_level", ({ roomId, level }) => act(roomId, (r, pid) => r.engine.setEngineLevel(pid, level)));
+  socket.on("start_task", ({ roomId, taskId }) => act(roomId, (r, pid) => r.engine.startTask(pid, taskId)));
+  socket.on("bang_door", ({ roomId }) => act(roomId, (r, pid) => r.engine.bangDoor(pid)));
+  socket.on("open_airlock", ({ roomId }) => act(roomId, (r, pid) => r.engine.openAirlock(pid)));
+  socket.on("shoot_turret", ({ roomId }) => act(roomId, (r, pid) => r.engine.shootTurretShip(pid)));
+
   socket.on("disconnect", () => {
     for (const room of rooms.rooms.values()) {
       if (room.sockets.has(socket.id)) {
