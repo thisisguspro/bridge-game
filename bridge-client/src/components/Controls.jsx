@@ -75,7 +75,7 @@ export function useControls({ view, roomId, conn, onOpenTask, onOpenSabotage, on
           // Project the destination well ahead in the held direction so the player
           // glides at full engine speed (a short lookahead used to throttle them
           // far below the bots — this is the real "players feel slow" fix).
-          const LOOK = 9000;
+          const LOOK = 1250;
           const wx = v.you.x + (dx + dy) * LOOK;
           const wy = v.you.y + (dy - dx) * LOOK;
           conn.setDestination(roomId, wx, wy);
@@ -92,7 +92,7 @@ export function useControls({ view, roomId, conn, onOpenTask, onOpenSabotage, on
 }
 
 // --- action resolvers (mirror what the HUD buttons do) ---
-const INTERACT_RANGE = 1500; // scaled for huge rooms
+const INTERACT_RANGE = 150; // world units to a marker
 
 function nearestTask(v) {
   const you = v.you || {};
