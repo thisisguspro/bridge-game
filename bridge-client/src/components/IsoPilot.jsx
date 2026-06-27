@@ -1,10 +1,9 @@
-// Retro 90s OVA-style anime pilot, drawn in SVG: bold black outlines, flat
-// cel-shaded color blocks with hard shadow tones, big expressive eyes with
-// highlights, and dramatic spiky hair. Reflects the player's ID color (suit
-// trim + tank), facing, role, and walk bob. Rendered by IsoStage.
+// Sleek android-cowboy, drawn in SVG: humanlike but clearly robotic — metal
+// chassis with panel seams, a glowing visor band for eyes, a brimmed hat, and
+// ID-colored accents (chest core, hat band, boots). Western frontier on a
+// future train. Reflects ID color, facing, role, walk bob.
 
-// cel shading: return a darker "shadow" tone of a hex for the hard cel split
-function shade(hex, amt = 0.62) {
+function shade(hex, amt = 0.6) {
   const h = hex.replace("#", "");
   const r = Math.round(parseInt(h.slice(0, 2), 16) * amt);
   const g = Math.round(parseInt(h.slice(2, 4), 16) * amt);
@@ -13,119 +12,130 @@ function shade(hex, amt = 0.62) {
 }
 
 export default function IsoPilot({ player, facing = "SE", moving = false, isYou = false, scale = 1, showSymbol = true, showLabel = false }) {
-  const id = player.idColor?.hex || "#46e6ff";
+  const id = player.idColor?.hex || "#e0a93a";
   const shape = player.idColor?.shape || "circle";
   const colorName = player.idColor?.name;
-  const suit = player.loadout?.body ? bodyTint(player.loadout.body) : "#2a2740";
-  const suitDark = shade(suit, 0.6);
-  const hair = player.loadout?.headpiece ? headTint(player.loadout.headpiece) : "#1a1622";
-  const hairDark = shade(typeof hair === "string" && hair.startsWith("#") ? hair : "#1a1622", 0.6);
   const idDark = shade(id, 0.6);
+  // metal chassis tones (brushed steel / gunmetal, warm under saloon light)
+  const steel = "#9a9488";
+  const steelDark = "#5f5a51";
+  const steelShadow = "#403c35";
+  const hat = "#3a2417";       // dark felt cowboy hat
+  const hatDark = "#241509";
   const flip = facing === "SW" || facing === "NW";
   const back = facing === "NW" || facing === "NE";
-  const onEnergy = player.plane === "energy";
+  const onEnergy = player.plane === "energy"; // (handled as a drone elsewhere)
   const eliminated = player.plane === "eliminated";
-  const OUT = "#0a0810"; // bold outline color
+  const OUT = "#1a120a"; // dark outline (wood-ink, not pure black)
 
   return (
     <div style={{
-      width: 70 * scale, height: 104 * scale, transform: "translate(-50%,-84%)",
+      width: 72 * scale, height: 108 * scale, transform: "translate(-50%,-84%)",
       position: "absolute", pointerEvents: "none",
-      opacity: eliminated ? 0.25 : onEnergy ? 0.72 : 1,
+      opacity: eliminated ? 0.25 : 1,
       filter: isYou
-        ? (onEnergy ? "drop-shadow(0 0 14px rgba(70,230,255,0.95))" : "drop-shadow(0 0 12px rgba(255,45,120,0.85))")
-        : onEnergy ? "drop-shadow(0 0 9px rgba(70,230,255,0.6)) saturate(0.5)" : "drop-shadow(0 4px 4px rgba(0,0,0,0.6))",
+        ? "drop-shadow(0 0 12px rgba(224,169,58,0.85))"
+        : "drop-shadow(0 4px 4px rgba(0,0,0,0.6))",
     }}>
       {/* ground shadow */}
-      <div style={{ position: "absolute", left: "50%", bottom: 2, width: 44 * scale, height: 16 * scale, transform: "translateX(-50%)", background: onEnergy ? "radial-gradient(ellipse, rgba(70,230,255,0.35) 0%, transparent 70%)" : "radial-gradient(ellipse, rgba(0,0,0,0.5) 0%, transparent 70%)" }} />
+      <div style={{ position: "absolute", left: "50%", bottom: 2, width: 46 * scale, height: 16 * scale, transform: "translateX(-50%)", background: "radial-gradient(ellipse, rgba(0,0,0,0.5) 0%, transparent 70%)" }} />
 
-      <svg viewBox="0 0 70 104" width={70 * scale} height={104 * scale}
+      <svg viewBox="0 0 72 108" width={72 * scale} height={108 * scale}
         style={{ position: "absolute", inset: 0, transform: flip ? "scaleX(-1)" : "none", animation: moving ? "pilotbob 0.45s ease-in-out infinite" : "none" }}>
 
-        {/* ---- O2 tank on back ---- */}
-        <rect x="41" y="40" width="14" height="30" rx="6" fill={id} stroke={OUT} strokeWidth="3" opacity={back ? 1 : 0.95} />
-        <rect x="41" y="40" width="6" height="30" rx="3" fill={idDark} stroke="none" opacity={back ? 0.9 : 0.85} />
+        {/* ---- power-cell backpack (the "battery") ---- */}
+        <rect x="43" y="40" width="13" height="26" rx="3" fill={steelDark} stroke={OUT} strokeWidth="3" opacity={back ? 1 : 0.95} />
+        <rect x="46" y="44" width="7" height="5" rx="1" fill={id} />
+        <rect x="46" y="52" width="7" height="3" rx="1" fill={id} opacity="0.7" />
 
-        {/* ---- legs (cel-shaded boots) ---- */}
-        <g style={{ transformOrigin: "26px 70px", animation: moving ? "stepL 0.45s ease-in-out infinite" : "none" }}>
-          <rect x="22" y="68" width="11" height="26" rx="4" fill={suit} stroke={OUT} strokeWidth="3" />
-          <rect x="22" y="68" width="4" height="26" fill={suitDark} />
-          <rect x="20" y="90" width="15" height="9" rx="3" fill={id} stroke={OUT} strokeWidth="3" />
+        {/* ---- legs: armored with ID-trim boots ---- */}
+        <g style={{ transformOrigin: "27px 70px", animation: moving ? "stepL 0.45s ease-in-out infinite" : "none" }}>
+          <rect x="23" y="66" width="11" height="27" rx="3" fill={steel} stroke={OUT} strokeWidth="3" />
+          <rect x="23" y="66" width="4" height="27" fill={steelShadow} />
+          <rect x="22" y="76" width="13" height="3" fill={steelDark} />
+          <rect x="21" y="89" width="15" height="10" rx="2" fill={steelDark} stroke={OUT} strokeWidth="3" />
+          <rect x="21" y="89" width="15" height="3" fill={id} />
         </g>
-        <g style={{ transformOrigin: "40px 70px", animation: moving ? "stepR 0.45s ease-in-out infinite" : "none" }}>
-          <rect x="37" y="68" width="11" height="26" rx="4" fill={suit} stroke={OUT} strokeWidth="3" />
-          <rect x="37" y="68" width="4" height="26" fill={suitDark} />
-          <rect x="35" y="90" width="15" height="9" rx="3" fill={id} stroke={OUT} strokeWidth="3" />
-        </g>
-
-        {/* ---- torso: flight suit with cel shadow + chest emblem ---- */}
-        <path d="M20 44 Q20 36 35 36 Q50 36 50 44 L50 70 Q35 76 20 70 Z" fill={suit} stroke={OUT} strokeWidth="3" />
-        <path d="M20 44 Q20 36 35 36 L35 72 Q27 71 20 70 Z" fill={suitDark} opacity="0.55" />
-        {/* ID-colored chest light / emblem */}
-        <circle cx="35" cy="52" r="6" fill={id} stroke={OUT} strokeWidth="2.5" />
-        <circle cx="33" cy="50" r="2" fill="#fff" opacity="0.8" />
-
-        {/* ---- arms ---- */}
-        <g style={{ transformOrigin: "20px 46px", animation: moving ? "armL 0.45s ease-in-out infinite" : "none" }}>
-          <rect x="13" y="44" width="10" height="26" rx="5" fill={suit} stroke={OUT} strokeWidth="3" />
-          <rect x="13" y="44" width="4" height="26" fill={suitDark} />
-        </g>
-        <g style={{ transformOrigin: "50px 46px", animation: moving ? "armR 0.45s ease-in-out infinite" : "none" }}>
-          <rect x="47" y="44" width="10" height="26" rx="5" fill={suit} stroke={OUT} strokeWidth="3" />
+        <g style={{ transformOrigin: "45px 70px", animation: moving ? "stepR 0.45s ease-in-out infinite" : "none" }}>
+          <rect x="38" y="66" width="11" height="27" rx="3" fill={steel} stroke={OUT} strokeWidth="3" />
+          <rect x="38" y="66" width="4" height="27" fill={steelShadow} />
+          <rect x="37" y="76" width="13" height="3" fill={steelDark} />
+          <rect x="36" y="89" width="15" height="10" rx="2" fill={steelDark} stroke={OUT} strokeWidth="3" />
+          <rect x="36" y="89" width="15" height="3" fill={id} />
         </g>
 
-        {/* ---- neck ---- */}
-        <rect x="31" y="30" width="8" height="9" fill={shade("#f3d9c6", 0.85)} stroke={OUT} strokeWidth="2.5" />
+        {/* ---- torso: armored chest plate + chest core + bandolier ---- */}
+        <path d="M21 44 Q21 37 36 37 Q51 37 51 44 L51 68 Q36 73 21 68 Z" fill={steel} stroke={OUT} strokeWidth="3" />
+        <path d="M21 44 Q21 37 36 37 L36 70 Q28 69 21 68 Z" fill={steelShadow} opacity="0.55" />
+        {/* bandolier strap with bullet studs */}
+        <path d="M23 42 L49 64" stroke={hatDark} strokeWidth="4" />
+        <circle cx="29" cy="48" r="1.3" fill={id} /><circle cx="35" cy="53" r="1.3" fill={id} /><circle cx="41" cy="58" r="1.3" fill={id} />
+        {/* glowing chest core (battery indicator) */}
+        <circle cx="36" cy="53" r="5.5" fill={idDark} stroke={OUT} strokeWidth="2.5" />
+        <circle cx="36" cy="53" r="2.6" fill={id} />
+        <circle cx="34.5" cy="51.5" r="1" fill="#fff" opacity="0.85" />
 
-        {/* ---- HEAD: big anime head, cel-shaded skin ---- */}
+        {/* ---- arms: pistons + gloved metal hands ---- */}
+        <g style={{ transformOrigin: "21px 46px", animation: moving ? "armL 0.45s ease-in-out infinite" : "none" }}>
+          <rect x="14" y="44" width="9" height="24" rx="4" fill={steel} stroke={OUT} strokeWidth="3" />
+          <rect x="14" y="44" width="3.5" height="24" fill={steelShadow} />
+          <circle cx="18.5" cy="68" r="4" fill={steelDark} stroke={OUT} strokeWidth="2.5" />
+        </g>
+        <g style={{ transformOrigin: "51px 46px", animation: moving ? "armR 0.45s ease-in-out infinite" : "none" }}>
+          <rect x="49" y="44" width="9" height="24" rx="4" fill={steel} stroke={OUT} strokeWidth="3" />
+          <circle cx="53.5" cy="68" r="4" fill={steelDark} stroke={OUT} strokeWidth="2.5" />
+        </g>
+
+        {/* ---- neck joint ---- */}
+        <rect x="32" y="31" width="8" height="8" fill={steelDark} stroke={OUT} strokeWidth="2.5" />
+
+        {/* ---- HEAD: robotic, with a glowing visor for eyes ---- */}
         <g>
-          {/* skin base */}
-          <path d="M18 18 Q18 4 35 4 Q52 4 52 18 Q52 32 35 34 Q18 32 18 18 Z" fill="#fbe3cf" stroke={OUT} strokeWidth="3" />
-          {/* cel shadow on one side of face */}
-          <path d="M18 18 Q18 4 35 4 L35 34 Q18 32 18 18 Z" fill="#e8b89a" opacity="0.45" />
+          {/* metal skull */}
+          <rect x="22" y="12" width="28" height="22" rx="8" fill={steel} stroke={OUT} strokeWidth="3" />
+          <rect x="22" y="12" width="10" height="22" rx="8" fill={steelShadow} opacity="0.5" />
+          {/* cheek/jaw seam */}
+          <path d="M25 28 H47" stroke={steelShadow} strokeWidth="1.5" />
+          {/* side audio pods */}
+          <rect x="19" y="20" width="4" height="8" rx="2" fill={steelDark} stroke={OUT} strokeWidth="2" />
+          <rect x="49" y="20" width="4" height="8" rx="2" fill={steelDark} stroke={OUT} strokeWidth="2" />
 
           {!back ? (
             <>
-              {/* ---- big anime eyes ---- */}
-              {/* left eye */}
-              <ellipse cx="28" cy="20" rx="4.5" ry="6" fill="#fff" stroke={OUT} strokeWidth="2" />
-              <ellipse cx="28.5" cy="21" rx="3" ry="4.2" fill={id} />
-              <circle cx="28.5" cy="22" r="1.6" fill={OUT} />
-              <circle cx="27" cy="19" r="1.4" fill="#fff" />
-              {/* right eye */}
-              <ellipse cx="42" cy="20" rx="4.5" ry="6" fill="#fff" stroke={OUT} strokeWidth="2" />
-              <ellipse cx="41.5" cy="21" rx="3" ry="4.2" fill={id} />
-              <circle cx="41.5" cy="22" r="1.6" fill={OUT} />
-              <circle cx="40" cy="19" r="1.4" fill="#fff" />
-              {/* brows */}
-              <path d="M24 13 Q28 11 32 13" stroke={OUT} strokeWidth="2" fill="none" strokeLinecap="round" />
-              <path d="M38 13 Q42 11 46 13" stroke={OUT} strokeWidth="2" fill="none" strokeLinecap="round" />
-              {/* small nose + mouth */}
-              <path d="M35 24 l-1.5 3 h3 z" fill="#e0a884" opacity="0.6" />
-              <path d="M31 29 Q35 32 39 29" stroke={OUT} strokeWidth="1.8" fill="none" strokeLinecap="round" />
-              {/* blush (cute OVA touch) */}
-              <ellipse cx="24" cy="26" rx="3" ry="1.6" fill="#ff7a9c" opacity="0.4" />
-              <ellipse cx="46" cy="26" rx="3" ry="1.6" fill="#ff7a9c" opacity="0.4" />
+              {/* glowing visor band (the eyes) */}
+              <rect x="25" y="19" width="22" height="7" rx="3.5" fill="#0d0a06" stroke={OUT} strokeWidth="2" />
+              <rect x="27" y="20.5" width="18" height="4" rx="2" fill={id} />
+              {/* two bright optic dots */}
+              <circle cx="31" cy="22.5" r="1.8" fill="#fff" />
+              <circle cx="41" cy="22.5" r="1.8" fill="#fff" />
+              {/* faint mouth grille */}
+              <rect x="32" y="29" width="8" height="2.5" rx="1" fill={steelDark} />
+              <line x1="34" y1="29" x2="34" y2="31.5" stroke={OUT} strokeWidth="0.6" />
+              <line x1="36" y1="29" x2="36" y2="31.5" stroke={OUT} strokeWidth="0.6" />
+              <line x1="38" y1="29" x2="38" y2="31.5" stroke={OUT} strokeWidth="0.6" />
             </>
           ) : (
-            // back of head
-            <path d="M18 20 Q18 8 35 8 Q52 8 52 20 Z" fill={hairDark} />
+            <rect x="25" y="18" width="22" height="10" rx="3" fill={steelShadow} />
           )}
 
-          {/* ---- HAIR: spiky 90s OVA bangs over the forehead ---- */}
-          <path d="M16 18 Q14 2 35 2 Q56 2 54 18 Q50 10 44 12 L46 4 Q40 9 38 11 L38 2 Q34 9 32 11 L30 3 Q26 10 24 12 L26 5 Q19 9 16 18 Z"
-            fill={typeof hair === "string" && hair.startsWith("#") ? hair : "#1a1622"} stroke={OUT} strokeWidth="3" strokeLinejoin="round" />
-          <path d="M16 18 Q14 2 35 2 L35 11 Q30 9 24 12 L26 5 Q19 9 16 18 Z" fill={hairDark} opacity="0.5" />
-          {/* hair shine streak (cel highlight) */}
-          <path d="M30 4 Q40 4 44 9" stroke="#fff" strokeWidth="1.6" fill="none" opacity="0.5" strokeLinecap="round" />
+          {/* ---- COWBOY HAT ---- */}
+          {/* brim */}
+          <ellipse cx="36" cy="13" rx="22" ry="5.5" fill={hat} stroke={OUT} strokeWidth="3" />
+          <ellipse cx="36" cy="12" rx="22" ry="4.5" fill={hatDark} opacity="0.4" />
+          {/* crown */}
+          <path d="M26 13 Q26 1 36 1 Q46 1 46 13 Z" fill={hat} stroke={OUT} strokeWidth="3" />
+          <path d="M26 13 Q26 1 36 1 L36 13 Z" fill={hatDark} opacity="0.45" />
+          {/* ID-colored hat band */}
+          <rect x="26" y="9" width="20" height="3.5" fill={id} />
+          <circle cx="36" cy="10.7" r="1.6" fill={idDark} stroke={OUT} strokeWidth="0.8" />
         </g>
       </svg>
 
-      {/* colorblind symbol badge above head */}
+      {/* colorblind symbol badge — a sheriff-ish star plate above the hat */}
       {showSymbol && !eliminated && (
-        <div style={{ position: "absolute", left: "50%", top: -8 * scale, transform: "translateX(-50%)", display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+        <div style={{ position: "absolute", left: "50%", top: -10 * scale, transform: "translateX(-50%)", display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
           <svg viewBox="0 0 24 24" width={20 * scale} height={20 * scale} style={{ filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.9))" }}>
-            <circle cx="12" cy="12" r="11" fill="rgba(10,8,16,0.9)" stroke={id} strokeWidth="2.5" />
+            <circle cx="12" cy="12" r="11" fill="rgba(26,18,10,0.92)" stroke={id} strokeWidth="2.5" />
             <g fill={id} stroke={id}>{symbolPath(shape)}</g>
           </svg>
           {showLabel && colorName && (
@@ -136,25 +146,16 @@ export default function IsoPilot({ player, facing = "SE", moving = false, isYou 
 
       <style>{`
         @keyframes pilotbob{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}}
-        @keyframes stepL{0%,100%{transform:rotate(13deg)}50%{transform:rotate(-13deg)}}
-        @keyframes stepR{0%,100%{transform:rotate(-13deg)}50%{transform:rotate(13deg)}}
-        @keyframes armL{0%,100%{transform:rotate(-10deg)}50%{transform:rotate(14deg)}}
-        @keyframes armR{0%,100%{transform:rotate(10deg)}50%{transform:rotate(-14deg)}}
+        @keyframes stepL{0%,100%{transform:rotate(12deg)}50%{transform:rotate(-12deg)}}
+        @keyframes stepR{0%,100%{transform:rotate(-12deg)}50%{transform:rotate(12deg)}}
+        @keyframes armL{0%,100%{transform:rotate(-9deg)}50%{transform:rotate(13deg)}}
+        @keyframes armR{0%,100%{transform:rotate(9deg)}50%{transform:rotate(-13deg)}}
       `}</style>
     </div>
   );
 }
 
-function bodyTint(body) {
-  const map = { default: "#2a2740", crimson: "#7a1a2e", azure: "#1a3a6a", jade: "#1a5a3a", violet: "#3a1a5a", gold: "#6a5a1a" };
-  return map[body] || "#2a2740";
-}
-function headTint(hp) {
-  const map = { default: "#1a1622", blonde: "#d9b15a", pink: "#e85a9c", silver: "#b8c0d0", teal: "#2aa0a0", red: "#c0303a" };
-  return map[hp] || "#1a1622";
-}
-
-// symbol glyphs for the colorblind ID badge (unchanged set)
+// symbol glyphs for the colorblind ID badge
 function symbolPath(shape) {
   switch (shape) {
     case "triangle": return <polygon points="12,5 18,17 6,17" />;
@@ -172,9 +173,6 @@ function symbolPath(shape) {
     case "spade": return <path d="M12 4 C6 10 6 14 9 14 C7 14 7 18 12 16 C17 18 17 14 15 14 C18 14 18 10 12 4 Z" />;
     case "club": return <circle cx="12" cy="9" r="3.5" />;
     case "sun": return <g><circle cx="12" cy="12" r="4" /><polygon points="12,2 13,6 11,6" /><polygon points="12,22 13,18 11,18" /><polygon points="2,12 6,11 6,13" /><polygon points="22,12 18,11 18,13" /></g>;
-    case "anchor": return <path d="M12 5 a2 2 0 1 1 0 0.1 M12 7 v11 M7 14 a5 5 0 0 0 10 0" stroke="currentColor" strokeWidth="2" fill="none" />;
-    case "shell": return <path d="M12 5 a7 7 0 0 1 0 14 q-6 -2 -6 -7 a6 6 0 0 1 6 -7 z" />;
-    case "leaf": return <path d="M6 18 C6 8 18 6 18 6 C18 16 8 18 6 18 Z" />;
     case "bolt": return <polygon points="13,3 6,13 11,13 9,21 18,10 12,10" />;
     case "moon": return <path d="M16 4 a8 8 0 1 0 0 16 a6 6 0 1 1 0 -16 z" />;
     default: return <circle cx="12" cy="12" r="6" />;
