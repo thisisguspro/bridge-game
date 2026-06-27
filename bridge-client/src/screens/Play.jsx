@@ -503,6 +503,7 @@ function Match({ view, roomId, conn, events, onLeave }) {
   // Show "YOU WERE DOWNED" banner for 3 seconds on first energy plane entry
   useEffect(() => {
     if (onEnergy && !prevEnergy.current) {
+      sfx.downed(); // harsh negative cue — your oxygen was pulled
       setDownedBanner(true);
       const t = setTimeout(() => setDownedBanner(false), 3000);
       return () => clearTimeout(t);
@@ -679,7 +680,7 @@ function Match({ view, roomId, conn, events, onLeave }) {
 
         {/* vote opener + comms — kept left of the corner minimap so they don't overlap */}
         <div style={{ position: "absolute", top: 14, right: 235, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
-          <div className="impactf faint" style={{ fontSize: 10, letterSpacing: "0.12em", pointerEvents: "none", opacity: 0.7 }}>build R23</div>
+          <div className="impactf faint" style={{ fontSize: 10, letterSpacing: "0.12em", pointerEvents: "none", opacity: 0.7 }}>build R24</div>
           <div className="row gap-s">
             <button className="btn" style={{ fontSize: 13, padding: "8px 14px", borderColor: "var(--volt)" }} onClick={() => { comms.setOpen(true); }}>声 COMMS</button>
             <button className="btn btn-hot" style={{ fontSize: 13, padding: "8px 16px" }} onClick={() => { setVoteOpen(true); }}>

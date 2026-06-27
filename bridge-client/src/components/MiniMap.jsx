@@ -82,7 +82,7 @@ export default function MiniMap({ view, compact = false, local = false }) {
           <span className="kanji faint" style={{ fontSize: 12 }}>戦域図</span>
         </div>
       )}
-      <svg viewBox={`0 0 ${vbW} ${vbH}`} style={{ width: "100%", height: "100%", maxWidth: "100%", maxHeight: "100%", background: compact ? "transparent" : "var(--ink)", border: compact ? "none" : "2px solid var(--line)", display: "block", flex: "1 1 auto", minHeight: 0 }} preserveAspectRatio="xMidYMid meet">
+      <svg viewBox={`0 0 ${vbW} ${vbH}`} style={{ width: "100%", height: "100%", maxWidth: "100%", maxHeight: "100%", background: "transparent", border: "none", display: "block", flex: "1 1 auto", minHeight: 0 }} preserveAspectRatio="xMidYMid meet">
         {/* grid wash */}
         <defs>
           <pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse">

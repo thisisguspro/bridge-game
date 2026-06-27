@@ -102,5 +102,25 @@ export const sfx = {
   eject: () => {
     playNoise(1.5, 0.6);
     playTone("triangle", 100, 1.5, 0.4, true);
+  },
+  // Harsh negative cue: a low descending growl + a noise burst. Played when an
+  // outlaw pulls YOUR oxygen cable (you go down).
+  downed: () => {
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    // descending detuned tones for a sick "power-loss" feel
+    [220, 165].forEach((f, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sawtooth";
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.frequency.setValueAtTime(f, now);
+      osc.frequency.exponentialRampToValueAtTime(f * 0.35, now + 0.7);
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(0.22, now + 0.04);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.8);
+      osc.start(now + i * 0.05); osc.stop(now + 0.85);
+    });
+    playNoise(0.5, 0.35);
   }
 };
