@@ -76,3 +76,33 @@ export function Particles({ density = 40, color = "rgba(255,80,110,0.6)" }) {
   }, [density, color]);
   return <canvas ref={ref} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none", zIndex: 1 }} aria-hidden="true" />;
 }
+
+// Screen-shake hook: call shake() to jolt a wrapped element. Returns a style to
+// spread onto the container and the trigger fn. Heavy-flair for impactful events.
+export function useScreenShake() {
+  const [shaking, setShaking] = useState(false);
+  const shake = useCallback(() => { setShaking(false); requestAnimationFrame(() => setShaking(true)); }, []);
+  const style = shaking ? { animation: "screenshake 0.4s cubic-bezier(.36,.07,.19,.97)" } : undefined;
+  const onAnimationEnd = () => setShaking(false);
+  return { shake, style, onAnimationEnd };
+}
+
+// A one-shot sparkle burst at center screen (cel-style 4-point stars). Mount it
+// with a key to replay. Auto-cleans via onDone.
+export function SparkleBurst({ color = "var(--volt)", onDone }) {
+  useEffect(() => { const t = setTimeout(() => onDone && onDone(), 800); return () => clearTimeout(t); }, [onDone]);
+  const stars = Array.from({ length: 10 }, (_, i) => {
+    const ang = (i / 10) * Math.PI * 2, dist = 60 + (i % 3) * 40;
+    return { x: Math.cos(ang) * dist, y: Math.sin(ang) * dist, d: (i % 4) * 0.05 };
+  });
+  return (
+    <div style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 90, display: "grid", placeItems: "center" }} aria-hidden="true">
+      {stars.map((s, i) => (
+        <svg key={i} width="28" height="28" viewBox="0 0 24 24"
+          style={{ position: "absolute", animation: `sparkfly 0.8s ease-out ${s.d}s forwards`, ["--dx"]: `${s.x}px`, ["--dy"]: `${s.y}px` }}>
+          <path d="M12 0 L14 10 L24 12 L14 14 L12 24 L10 14 L0 12 L10 10 Z" fill={color} />
+        </svg>
+      ))}
+    </div>
+  );
+}

@@ -8,16 +8,16 @@
 
 :root {
   /* Palette — ink, paper-flash, and a hot sun-red hero accent */
-  --ink:        #0d0b14;   /* near-black background */
-  --ink-2:      #16131f;   /* raised panels */
-  --ink-3:      #211c2e;   /* cards */
-  --line:       #342d44;
+  --ink:        #07060d;   /* deeper near-black background */
+  --ink-2:      #0f0c1a;   /* raised panels */
+  --ink-3:      #1a1530;   /* cards */
+  --line:       #3a2f5c;
   --paper:      #f7f3e9;   /* manga paper flash (text/panels) */
-  --hot:        #ff2d4d;   /* sun-red — the hero accent (impact, danger, energy) */
-  --hot-deep:   #b3122c;
-  --gold:       #ffc83d;   /* level/prestige */
-  --volt:       #46e6ff;   /* energy plane / cyan pop */
-  --violet:     #b15cff;   /* magic/impostor undertone */
+  --hot:        #ff2d78;   /* hot neon pink — hero accent */
+  --hot-deep:   #c4145a;
+  --gold:       #ffd23d;   /* level/prestige */
+  --volt:       #2af0ff;   /* electric cyan pop */
+  --violet:     #c46bff;   /* magic/impostor undertone */
   --dim:        #8a7fa3;
   --faint:      #5a5170;
 
@@ -121,7 +121,8 @@ button { font-family: var(--body); cursor: pointer; border: none; background: no
   clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px));
   position: relative;
 }
-.panel-hot { border-color: var(--hot-deep); box-shadow: 0 0 0 1px rgba(255,45,77,0.2), 0 10px 40px rgba(0,0,0,0.5); }
+.panel-hot { border-color: var(--hot); box-shadow: 0 0 0 1px rgba(255,45,120,0.3), 0 0 28px rgba(255,45,120,0.25), 0 10px 40px rgba(0,0,0,0.6); }
+.panel-volt { border-color: var(--volt); box-shadow: 0 0 0 1px rgba(42,240,255,0.3), 0 0 28px rgba(42,240,255,0.25), 0 10px 40px rgba(0,0,0,0.6); }
 
 /* Hard diagonal label tag (eyebrow) */
 .tag {
@@ -139,10 +140,10 @@ button { font-family: var(--body); cursor: pointer; border: none; background: no
   clip-path: polygon(8px 0, 100% 0, calc(100% - 8px) 100%, 0 100%);
   transition: transform .08s ease, background .12s ease, color .12s ease, border-color .12s;
 }
-.btn:hover { transform: translateY(-2px); border-color: var(--hot); }
+.btn:hover { transform: translateY(-2px); border-color: var(--hot); box-shadow: 0 0 16px rgba(255,45,120,0.35); }
 .btn:active { transform: translateY(1px) scale(0.98); }
-.btn-hot { background: var(--hot); color: var(--ink); border-color: var(--hot); }
-.btn-hot:hover { background: #ff4d63; box-shadow: 0 0 24px rgba(255,45,77,0.5); }
+.btn-hot { background: var(--hot); color: var(--ink); border-color: var(--hot); box-shadow: 0 0 18px rgba(255,45,120,0.4); }
+.btn-hot:hover { background: #ff4d8f; box-shadow: 0 0 28px rgba(255,45,120,0.6); }
 .btn-ghost { background: transparent; }
 .btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
 
@@ -168,4 +169,18 @@ button { font-family: var(--body); cursor: pointer; border: none; background: no
 @keyframes attackpulse {
   0%, 100% { box-shadow: inset 0 0 90px 8px rgba(255,45,77,0.35); }
   50%      { box-shadow: inset 0 0 150px 22px rgba(255,45,77,0.7); }
+}
+
+/* heavy-flair effects */
+@keyframes screenshake {
+  0%,100% { transform: translate(0,0) rotate(0); }
+  20% { transform: translate(-6px,4px) rotate(-0.6deg); }
+  40% { transform: translate(7px,-5px) rotate(0.6deg); }
+  60% { transform: translate(-5px,-4px) rotate(-0.4deg); }
+  80% { transform: translate(5px,5px) rotate(0.4deg); }
+}
+@keyframes sparkfly {
+  0% { transform: translate(0,0) scale(0.2); opacity: 0; }
+  30% { opacity: 1; }
+  100% { transform: translate(var(--dx), var(--dy)) scale(1); opacity: 0; }
 }

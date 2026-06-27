@@ -10,7 +10,7 @@ import { EmoteBubble } from "./Emotes.jsx";
 // motion looks smooth.
 //
 // Iso projection: screen = ( (x - y) * COS, (x + y) * SIN ) — classic 2:1 iso.
-const ISO = { cos: 0.86, sin: 0.5, scale: 0.42 };
+const ISO = { cos: 0.86, sin: 0.5, scale: 1.05 };
 function toScreen(wx, wy) { return { sx: (wx - wy) * ISO.cos * ISO.scale, sy: (wx + wy) * ISO.sin * ISO.scale }; }
 
 // ---- Room art image cache ----

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { createGameConnection } from "../api/game.js";
-import { SpeedLines, useImpact, KanjiFlash } from "../components/effects.jsx";
+import { SpeedLines, useImpact, KanjiFlash, useScreenShake, SparkleBurst } from "../components/effects.jsx";
 import MiniMap from "../components/MiniMap.jsx";
 import IsoStage from "../components/IsoStage.jsx";
 import VotePanel from "../components/VotePanel.jsx";
@@ -286,6 +286,8 @@ function Draft({ view, roomId, conn }) {
 /* ---------------- live match ---------------- */
 function Match({ view, roomId, conn, events }) {
   const { pop, layer } = useImpact();
+  const shakeFx = useScreenShake();
+  const [sparkle, setSparkle] = useState(null);
   const [voteOpen, setVoteOpen] = useState(false);
   const [sabOpen, setSabOpen] = useState(false);
   const [escOpen, setEscOpen] = useState(false);
@@ -339,13 +341,16 @@ function Match({ view, roomId, conn, events }) {
   const prevWarnRef = useRef(false);
   useEffect(() => {
     const nowAttack = !!view.attack;
-    if (nowAttack && !prevAttackRef.current) playSound("attack_warning");
+    const attackRising = nowAttack && !prevAttackRef.current;
+    if (attackRising) playSound("attack_warning");
     prevAttackRef.current = nowAttack;
     const nowWarn = !!view.attackWarning;
     if (nowWarn && !prevWarnRef.current) playSound("attack_warning");
     prevWarnRef.current = nowWarn;
     // pop the turret fire panel automatically when a wave starts and you're manning one
     if (nowAttack && view.yourTurret) setTurretOpen(true);
+    // heavy flair: jolt the screen + sparkle burst when a wave begins
+    if (attackRising) { shakeFx.shake(); setSparkle(Date.now()); }
   }, [view.attack, view.attackWarning]);
   // close the turret panel if you walk out of the turret room
   useEffect(() => {
@@ -354,8 +359,9 @@ function Match({ view, roomId, conn, events }) {
   const act = (fn) => (e) => { fn(); if (e) pop(e.clientX, e.clientY); };
 
   return (
-    <div style={{ height: "100%", display: "grid", gridTemplateColumns: "300px 1fr 320px" }}>
+    <div style={{ height: "100%", display: "grid", gridTemplateColumns: "300px 1fr 320px", ...shakeFx.style }} onAnimationEnd={shakeFx.onAnimationEnd}>
       {layer}
+      {sparkle && <SparkleBurst key={sparkle} onDone={() => setSparkle(null)} />}
       {/* voting overlay */}
       {voteOpen && (
         <div style={{ position: "fixed", inset: 0, zIndex: 200, display: "grid", placeItems: "center", background: "rgba(5,4,9,0.55)" }} onClick={(e) => { if (e.target === e.currentTarget) setVoteOpen(false); }}>
@@ -468,7 +474,7 @@ function Match({ view, roomId, conn, events }) {
 
         {/* hint + vote opener + comms */}
         <div style={{ position: "absolute", top: 14, right: 18, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
-          <div className="impactf faint" style={{ fontSize: 10, letterSpacing: "0.12em", pointerEvents: "none" }}>WASD MOVE · E INTERACT · Z EMOTE · V VOTE <span style={{ color: "var(--gold)" }}>· build R11</span></div>
+          <div className="impactf faint" style={{ fontSize: 10, letterSpacing: "0.12em", pointerEvents: "none" }}>WASD MOVE · E INTERACT · Z EMOTE · V VOTE <span style={{ color: "var(--gold)" }}>· build R13</span></div>
           <div className="row gap-s">
             <button className="btn" style={{ fontSize: 13, padding: "8px 14px", borderColor: "var(--volt)" }} onClick={() => comms.setOpen(true)}>声 COMMS</button>
             <button className="btn" style={{ fontSize: 13, padding: "8px 14px", borderColor: "var(--gold)" }} onClick={() => emotes.setOpen(true)}>😊 EMOTE</button>
