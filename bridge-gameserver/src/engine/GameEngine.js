@@ -581,12 +581,13 @@ export class GameEngine {
         if (rects.length) { const r = resolveMove(p.x, p.y, nx, ny, rects); nx = r.x; ny = r.y; }
       }
       p.x = nx; p.y = ny;
-      // Keep the player on the walkable floor (inside a room or a corridor band).
-      // If the new point is in the void, slide back to the nearest walkable point
-      // so you can't walk off the ship.
+      // Keep the player on the walkable floor. If the new point is in the void,
+      // try sliding along each axis (so you glide along a wall instead of dead-
+      // stopping). Only if both axes are blocked do we hold position.
       if (!p.outside && !this._isWalkable(p.x, p.y)) {
-        const safe = this._nearestWalkable(p.x, p.y, prevX, prevY);
-        p.x = safe.x; p.y = safe.y;
+        if (this._isWalkable(nx, prevY)) { p.x = nx; p.y = prevY; }        // slide horizontally
+        else if (this._isWalkable(prevX, ny)) { p.x = prevX; p.y = ny; }   // slide vertically
+        else { p.x = prevX; p.y = prevY; }                                  // truly cornered
       }
       const r = this._roomAt(p.x, p.y);
       if (r) p.room = r;

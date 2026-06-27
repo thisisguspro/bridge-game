@@ -137,7 +137,7 @@ export const MOVE = {
   SPEED_PER_SEC: 560,            // tuned for the room size so crossing feels right
   ARRIVE_EPS: 8,                 // within this many units = arrived
   BOT_SPEED_MULT: 0.45,          // bots clearly slower than the player
-  CORRIDOR_WIDTH: 240,           // walkable band width along corridors (world units) — generous so junctions aren't sticky
+  CORRIDOR_WIDTH: 320,           // wide, forgiving walkable band between close rooms
 };
 
 // ---- Hull & combat ----

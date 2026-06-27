@@ -19,7 +19,7 @@
 import { makeRng } from "./rng.js";
 
 const ROOM_SIZE = 460;   // fills the view at the current zoom; big enough that the sprite reads small, not a barren void
-const CORRIDOR_LEN = 240;
+const CORRIDOR_LEN = 90;  // short gaps so rooms sit close with fat, easy-to-walk connections
 
 // Functional room types that can appear in the random middle. Helm/Reactor/Airlock
 // are placed specially, so they're not in this pool. roles drive refill/repair.
