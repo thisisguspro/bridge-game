@@ -474,7 +474,7 @@ function Match({ view, roomId, conn, events }) {
 
         {/* hint + vote opener + comms */}
         <div style={{ position: "absolute", top: 14, right: 18, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
-          <div className="impactf faint" style={{ fontSize: 10, letterSpacing: "0.12em", pointerEvents: "none" }}>WASD MOVE · E INTERACT · Z EMOTE · V VOTE <span style={{ color: "var(--gold)" }}>· build R13</span></div>
+          <div className="impactf faint" style={{ fontSize: 10, letterSpacing: "0.12em", pointerEvents: "none" }}>WASD MOVE · E INTERACT · Z EMOTE · V VOTE <span style={{ color: "var(--gold)" }}>· build R14</span></div>
           <div className="row gap-s">
             <button className="btn" style={{ fontSize: 13, padding: "8px 14px", borderColor: "var(--volt)" }} onClick={() => comms.setOpen(true)}>声 COMMS</button>
             <button className="btn" style={{ fontSize: 13, padding: "8px 14px", borderColor: "var(--gold)" }} onClick={() => emotes.setOpen(true)}>😊 EMOTE</button>

@@ -18,8 +18,8 @@
 
 import { makeRng } from "./rng.js";
 
-const ROOM_SIZE = 1030;  // ~5x the area of the old 460 room; big explorable rooms
-const CORRIDOR_LEN = 140; // still short so rooms stay close with fat, walkable connections
+const ROOM_SIZE = 10300; // 100x the area of the prior 1030 room — huge explorable rooms
+const CORRIDOR_LEN = 1400;
 
 // Functional room types that can appear in the random middle. Helm/Reactor/Airlock
 // are placed specially, so they're not in this pool. roles drive refill/repair.

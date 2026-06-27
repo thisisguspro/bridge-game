@@ -41,7 +41,7 @@ export function useEmotes({ roomId, conn, events }) {
       setTimeout(() => {
         setBubbles((b) => { const n = { ...b }; if (n[e.from]?.id === key) delete n[e.from]; return n; });
         delete timers.current[key];
-      }, 2600);
+      }, 3000);
     }
   }, [events]); // eslint-disable-line
 
